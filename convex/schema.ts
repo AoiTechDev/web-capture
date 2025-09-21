@@ -11,6 +11,8 @@ export const captureValidator = v.union(
     storageId: v.optional(v.id("_storage")),
     url: v.string(),
     timestamp: v.float64(),
+    width: v.number(),
+    height: v.number(),
   }),
   v.object({
     kind: v.literal("text"),

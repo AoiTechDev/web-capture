@@ -11,8 +11,12 @@ export const imageUrls = query({
     return Promise.all(
       images.map(async (d) => ({
         _id: d._id,
-        url: await ctx.storage.getUrl(d.storageId!), // now safe
+        url: await ctx.storage.getUrl(d.storageId!), 
+        width: d.width,
+        height: d.height,
+        storageId: d.storageId,
       }))
     );
   },
 });
+

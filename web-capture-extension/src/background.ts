@@ -4,6 +4,7 @@
 // Listen for messages from content script
 import { ConvexClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
+import { getImageDimensions } from "./utils/get-image-dimensions";
 const client = new ConvexClient(import.meta.env.CONVEX_URL!);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -39,8 +40,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           body: blob,
         });
         if (!result.ok) throw new Error("Upload failed");
-        const { storageId } = await result.json();
 
+        const { storageId } = await result.json();
+        const { width, height } = (await getImageDimensions(blob)) as {
+          width: number;
+          height: number;
+        };
         // 4) Save the capture with storageId in Convex
         await client.mutation(api.upload.saveImageCapture, {
           storageId,
@@ -48,6 +53,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           alt: msg.data.alt ?? undefined,
           url: msg.data.url || "unknown", // page URL
           timestamp: Date.now(),
+          width,
+          height,
         });
 
         sendResponse({ statusCode: 200, message: "Image capture saved" });

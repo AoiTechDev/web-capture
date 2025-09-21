@@ -17,11 +17,13 @@ export type PublicApiType = {
         capture:
           | {
               alt?: string;
+              height: number;
               kind: "image";
               src: string;
               storageId?: Id<"_storage">;
               timestamp: number;
               url: string;
+              width: number;
             }
           | { content: string; kind: "text"; timestamp: number; url: string }
           | {
@@ -47,11 +49,19 @@ export type PublicApiType = {
       "public",
       {
         alt?: string;
+        height: number;
         src?: string;
         storageId: Id<"_storage">;
         timestamp: number;
         url: string;
+        width: number;
       },
+      any
+    >;
+    deleteById: FunctionReference<
+      "mutation",
+      "public",
+      { docId: Id<"captures">; storageId: Id<"_storage"> },
       any
     >;
   };

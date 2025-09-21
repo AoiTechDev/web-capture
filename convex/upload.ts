@@ -26,8 +26,13 @@ export const saveImageCapture = mutation({
     alt: v.optional(v.string()),
     url: v.string(),
     timestamp: v.float64(),
+    width: v.number(),
+    height: v.number(),
   }),
-  handler: async (ctx, { storageId, src, alt, url, timestamp }) => {
+  handler: async (
+    ctx,
+    { storageId, src, alt, url, timestamp, width, height }
+  ) => {
     await ctx.db.insert("captures", {
       kind: "image",
       storageId,
@@ -35,6 +40,19 @@ export const saveImageCapture = mutation({
       alt,
       url,
       timestamp,
+      width,
+      height,
     });
+  },
+});
+
+export const deleteById = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    docId: v.id("captures"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.docId);
+    await ctx.storage.delete(args.storageId);
   },
 });
