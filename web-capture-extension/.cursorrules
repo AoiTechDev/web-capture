@@ -1,0 +1,223 @@
+Web Capture Extension - Cursor Rules & Project Context
+🎯 PROJECT OVERVIEW
+Web Capture is a Chrome extension that allows users to instantly capture and intelligently categorize web elements (text, images, components) from any website with zero-friction UX. Users select elements with custom keyboard shortcuts, save them locally, and manage them through a web dashboard.
+Core Features
+
+Instant Capture: Select any web element and save with Ctrl+Shift+S
+Zero Friction: No confirmation dialogs, instant saves with background AI categorization
+Smart Organization: AI-powered categorization using GPT-4o Mini
+Universal Access: Works on any website, saves to centralized dashboard
+Background Processing: Queue system for AI categorization without interrupting browsing
+
+🏗️ SYSTEM ARCHITECTURE
+Chrome Extension (React + Vite + Bun)
+├── manifest.json (Manifest V3)
+├── src/
+│   ├── content/content.js (Element selection & capture)
+│   ├── background/background.js (Service worker, queue processing)
+│   ├── popup/Popup.jsx (React popup UI)
+│   ├── options/Options.jsx (Settings page)
+│   └── utils/ (Storage, messaging, API helpers)
+Backend API (Node.js + Express + PostgreSQL)
+├── Authentication (JWT)
+├── CRUD endpoints for captures
+├── AI categorization queue (Redis + GPT-4o Mini)
+├── Real-time sync with extension
+Dashboard (React + Tailwind)
+├── Library view (all captures with search/filter)
+├── Category management
+├── Bulk operations
+├── Export functionality
+📋 CURSOR RULES
+1. TECH STACK CONSTRAINTS
+
+Package Manager: ALWAYS use bun commands, never npm/yarn
+Extension: Manifest V3 only, no Manifest V2
+React: Functional components with hooks, no class components
+Styling: Tailwind CSS for dashboard, vanilla CSS for extension UI
+APIs: Use webextension-polyfill for modern async Chrome APIs
+Storage: Chrome storage API for extension, NO localStorage in extension context
+
+2. CHROME EXTENSION SPECIFIC RULES
+
+Content Scripts: Must handle cross-origin restrictions
+Service Worker: Use chrome.runtime.onMessage for communication
+Permissions: Request minimal permissions in manifest.json
+CSP: All inline scripts must be in separate files
+Element Selection: Always prevent default events during selection mode
+Storage Keys: Use consistent naming: capture_${id}, settings_${key}
+
+3. CODE STYLE & PATTERNS
+
+File Naming: kebab-case for files, PascalCase for React components
+Functions: Use async/await, avoid callback patterns
+Error Handling: Always wrap Chrome API calls in try/catch
+State Management: React hooks for local state, Chrome storage for persistence
+Event Listeners: Always clean up event listeners in useEffect cleanup
+Constants: Define in separate constants.js file
+
+4. UX/UI PRINCIPLES
+
+Speed First: Every interaction must be under 100ms response time
+Minimal Interruption: No confirmation dialogs during capture
+Visual Feedback: Always provide immediate visual confirmation
+Keyboard First: All actions must have keyboard shortcuts
+Progressive Enhancement: Work offline, sync when online
+
+5. AI INTEGRATION PATTERNS
+
+Background Only: Never block UI for AI operations
+Queue System: Implement proper retry logic with exponential backoff
+Categorization: Auto-categorize but allow manual override
+API Calls: Batch requests when possible to reduce API costs
+Fallback: Always have rule-based categorization fallback
+
+6. PERFORMANCE REQUIREMENTS
+
+Extension Size: Keep under 10MB total
+Memory Usage: Limit cached data to 50MB
+API Response: Under 500ms for categorization
+UI Response: Instant feedback (< 16ms) for all interactions
+Bundle Size: Dashboard chunks under 1MB each
+
+7. SECURITY & PRIVACY
+
+Permissions: Request only necessary host permissions
+Data Handling: Never store sensitive data in plain text
+Cross-Origin: Validate all external requests
+User Data: Encrypt before sending to backend
+Local Storage: Clear sensitive data on uninstall
+
+8. DEVELOPMENT WORKFLOW
+
+Build Command: Always use bun run build before testing
+Hot Reload: Use bun dev for development with watch mode
+Extension Reload: Manually reload extension in Chrome after builds
+Testing: Test on multiple websites (social media, docs, e-commerce)
+Debugging: Use Chrome DevTools for content script debugging
+
+🔧 TECHNICAL IMPLEMENTATION DETAILS
+Element Capture Flow
+1. User presses Ctrl+Shift+S or selects text
+2. Content script enters selection mode
+3. Element highlighted on hover
+4. Click captures element data (HTML, text, styles, context)
+5. Immediate save to Chrome storage
+6. Background worker queues for AI categorization
+7. Visual confirmation shown
+8. Continue browsing (zero interruption)
+Data Structure
+javascript// Capture Object Schema
+{
+  id: string,           // Unique identifier
+  type: 'text'|'element'|'image',
+  content: string,      // Main content
+  html: string,         // Original HTML (for elements)
+  url: string,          // Source URL
+  title: string,        // Page title
+  selector: string,     // CSS selector
+  category: string,     // AI-generated category
+  manualCategory: string, // User override
+  timestamp: number,    // Creation time
+  synced: boolean,      // Sync status
+  metadata: object      // Additional context
+}
+Chrome Extension Messaging
+javascript// Content Script → Background
+chrome.runtime.sendMessage({
+  type: 'SAVE_ELEMENT',
+  data: elementData
+});
+
+// Background → Content Script  
+chrome.tabs.sendMessage(tabId, {
+  type: 'TRIGGER_SAVE'
+});
+AI Categorization Categories
+javascriptconst CATEGORIES = [
+  'code',           // Code snippets, programming content
+  'article',        // Blog posts, news, documentation
+  'social-media',   // Tweets, posts, comments
+  'shopping',       // Products, prices, reviews
+  'research',       // Academic, data, studies
+  'inspiration',    // Quotes, images, ideas
+  'reference',      // Documentation, tutorials
+  'entertainment',  // Videos, memes, fun content
+  'work',          // Work-related content
+  'personal',      // Personal notes, reminders
+  'other'          // Fallback category
+];
+🚨 COMMON PITFALLS TO AVOID
+Chrome Extension Issues
+
+❌ Using localStorage in content scripts (use chrome.storage)
+❌ Inline event handlers (violates CSP)
+❌ Not handling permission errors
+❌ Forgetting to clean up event listeners
+❌ Blocking UI thread with heavy operations
+
+React/Vite Issues
+
+❌ Importing Node.js modules in browser code
+❌ Using process.env in extension context
+❌ Not handling async component mounting
+❌ Memory leaks from uncleared intervals/timeouts
+
+Performance Issues
+
+❌ Saving large images as base64 strings
+❌ Not debouncing rapid user interactions
+❌ Synchronous operations in content scripts
+❌ Too many DOM queries during element selection
+
+🎛️ DEVELOPMENT COMMANDS
+bash# Setup
+bunx create-vite web-capture-extension --template react
+cd web-capture-extension
+bun add @types/chrome webextension-polyfill
+
+# Development
+bun dev          # Watch mode development
+bun run build    # Production build
+bun reload       # Build + reload reminder
+
+# Extension Testing
+1. bun run build
+2. Open chrome://extensions/
+3. Load unpacked → select dist/ folder
+4. Test on various websites
+5. Check console for errors
+🔄 CURRENT PROJECT STATUS
+Completed
+
+✅ Project architecture design
+✅ Chrome extension setup with React + Vite + Bun
+✅ Manifest V3 configuration
+✅ Basic element selection system
+✅ Content script and service worker structure
+
+In Progress
+
+🔄 Implementing element capture functionality
+🔄 Building React popup UI
+🔄 Setting up storage utilities
+
+Next Steps
+
+Complete element capture and storage system
+Implement queue system for AI categorization
+Build dashboard frontend
+Set up backend API with GPT-4o Mini integration
+Add real-time sync between extension and dashboard
+
+💡 CONTEXT FOR AI ASSISTANCE
+When working on this project, always:
+
+Consider performance: Every feature should be lightning fast
+Think mobile-first: Dashboard should work on all devices
+Plan for scale: Architecture should handle thousands of captures
+Prioritize UX: User should never wait or be interrupted
+Test extensively: Different websites behave differently
+Follow Chrome guidelines: Manifest V3 compliance is critical
+
+The goal is to create the fastest, most seamless web content capture tool that becomes indispensable for daily browsing.
