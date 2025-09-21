@@ -3,8 +3,8 @@
 
 // Listen for messages from content script
 import { ConvexClient } from "convex/browser";
-import { api } from "../convex/_generated/api";
-const client = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
+import { api } from "../../convex/_generated/api";
+const client = new ConvexClient(import.meta.env.CONVEX_URL!);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
