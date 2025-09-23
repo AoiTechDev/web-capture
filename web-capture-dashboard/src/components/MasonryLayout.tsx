@@ -170,7 +170,7 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
               setImageUrl(item.url || "");
             }}
           >
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100 group duration-100 relative cursor-pointer">
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden   group duration-100 relative cursor-pointer">
               <div className="absolute inset-0 bg-black/50 group-hover:flex transition-all duration-100 hidden">
                 <button
                   className="absolute top-5 right-5 cursor-pointer"

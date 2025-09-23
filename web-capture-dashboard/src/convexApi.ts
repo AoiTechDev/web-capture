@@ -25,6 +25,18 @@ export type PublicApiType = {
       Record<string, never>,
       Array<{ _id: Id<"categories">; name: string }>
     >;
+    kindsForCategory: FunctionReference<
+      "query",
+      "public",
+      { category?: string },
+      Array<{ kind: "image" | "text" | "link" | "code" | "element"; count: number }>
+    >;
+    byCategoryAndKind: FunctionReference<
+      "query",
+      "public",
+      { category?: string; kind?: "image" | "text" | "link" | "code" | "element" },
+      any[]
+    >;
   };
   upload: {
     generateUploadUrl: FunctionReference<"mutation", "public", any, any>;

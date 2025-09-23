@@ -23,8 +23,8 @@ const Sidebar = () => {
 
       <div className="mt-12 space-y-2">
         <button
-          className={`w-full text-left px-2 py-1 rounded ${selected === null ? "bg-neutral-800" : "hover:bg-neutral-800"}`}
-          onClick={() => setSelected(null)}
+          className={`w-full text-left px-2 py-1 rounded ${selected === "unsorted" ? "bg-neutral-800" : "hover:bg-neutral-800"}`}
+          onClick={() => setSelected("unsorted")}
         >
           📥 Unsorted
         </button>

@@ -7,7 +7,18 @@ import { api } from "../../convex/_generated/api";
 import { getImageDimensions } from "./utils/get-image-dimensions";
 const client = new ConvexClient(import.meta.env.CONVEX_URL!);
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// Keyboard shortcut command handler (MV3)
+// chrome.commands?.onCommand.addListener((command) => {
+//   if (command === "screenshot-element") {
+//     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+//       if (tabs[0]?.id) {
+//         chrome.tabs.sendMessage(tabs[0].id, { type: "START_SCREENSHOT_MODE" });
+//       }
+//     });
+//   }
+// });
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "GET_CATEGORIES") {
@@ -69,6 +80,80 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
 
         sendResponse({ statusCode: 200, message: "Image capture saved" });
+      }
+
+      if (msg.type === "SCREENSHOT_ELEMENT") {
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          try {
+            chrome.tabs.captureVisibleTab({ format: "png", quality: 100 }, (url) => {
+              if (chrome.runtime.lastError || !url) reject(chrome.runtime.lastError);
+              else resolve(url);
+            });
+          } catch (e) {
+            reject(e);
+          }
+        });
+        if (sender?.tab?.id) {
+          chrome.tabs.sendMessage(sender.tab.id, {
+            type: "CROP_AND_UPLOAD",
+            dataUrl,
+            rect: msg.rect,
+          });
+        }
+        sendResponse({ statusCode: 200, message: "Screenshot captured" });
+      }
+
+      if (msg.type === "UPLOAD_CROPPED_IMAGE") {
+        const bytes = new Uint8Array(msg.bytes as ArrayBuffer);
+        const blob = new Blob([bytes], { type: "image/png" });
+        const postUrl = await client.mutation(api.upload.generateUploadUrl, {});
+        const uploadRes = await fetch(postUrl, {
+          method: "POST",
+          headers: { "Content-Type": "image/png" },
+          body: blob,
+        });
+        if (!uploadRes.ok) throw new Error("Upload failed");
+        const { storageId } = await uploadRes.json();
+
+        await client.mutation(api.upload.saveImageCapture, {
+          storageId,
+          src: undefined,
+          alt: "element screenshot",
+          url: msg.url || "unknown",
+          timestamp: Date.now(),
+          width: msg.width,
+          height: msg.height,
+          category: "element",
+        });
+
+        sendResponse({ statusCode: 200, message: "Element screenshot saved" });
+      }
+
+      if (msg.type === "UPLOAD_CROPPED_DATAURL") {
+        // Convert dataURL to Blob reliably
+        const res = await fetch(msg.dataUrl as string);
+        const blob = await res.blob();
+        const postUrl = await client.mutation(api.upload.generateUploadUrl, {});
+        const uploadRes = await fetch(postUrl, {
+          method: "POST",
+          headers: { "Content-Type": "image/png" },
+          body: blob,
+        });
+        if (!uploadRes.ok) throw new Error("Upload failed");
+        const { storageId } = await uploadRes.json();
+
+        await client.mutation(api.upload.saveImageCapture, {
+          storageId,
+          src: undefined,
+          alt: "element screenshot",
+          url: msg.url || "unknown",
+          timestamp: Date.now(),
+          width: msg.width,
+          height: msg.height,
+          category: "element",
+        });
+
+        sendResponse({ statusCode: 200, message: "Element screenshot saved" });
       }
     } catch (err) {
       console.error("❌ Convex background error:", err);
