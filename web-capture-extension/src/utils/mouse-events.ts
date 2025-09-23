@@ -1,93 +1,125 @@
 import { captureElement } from "./capture-element";
+import { showCategoryOverlay } from "./ui/categoryOverlay";
+import {
+  ensureHighlightOverlay,
+  positionHighlightOverlay,
+  hideHighlightOverlay,
+  cleanupHighlight,
+} from "./ui/highlight";
 
 let isSelecting = false;
+let categoryPromptEnabled = false;
+let selectedCategory: string | undefined;
+type PendingCapture =
+  | {
+      kind: "image";
+      src: string;
+      alt?: string;
+      url: string;
+      timestamp: number;
+      width?: number;
+      height?: number;
+    }
+  | { kind: "text"; content: string; url: string; timestamp: number }
+  | {
+      kind: "link";
+      href: string;
+      text?: string;
+      url: string;
+      timestamp: number;
+    }
+  | { kind: "code"; content: string; url: string; timestamp: number }
+  | {
+      kind: "element";
+      tagName: string;
+      content?: string;
+      url: string;
+      timestamp: number;
+    };
+
+let pendingElementData: PendingCapture | null = null;
 let currentHoveredElement: HTMLElement | null = null;
-let highlightOverlay: HTMLElement | null = null;
-let tagNameOverlay: HTMLElement | null = null;
-let tagNameContainer: HTMLElement | null = null;
-function createHighlightOverlay() {
-  if (highlightOverlay) return highlightOverlay;
 
-  // Highlight overlay
-  highlightOverlay = document.createElement("div");
-  highlightOverlay.style.position = "absolute";
-  highlightOverlay.style.backgroundColor = "rgba(59, 130, 246, 0.3)";
-  highlightOverlay.style.border = "2px solid #3b82f6";
-  highlightOverlay.style.borderRadius = "4px";
-  highlightOverlay.style.pointerEvents = "none";
-  highlightOverlay.style.zIndex = "999999";
-  highlightOverlay.style.transition = "all 0.1s ease-out";
-  highlightOverlay.style.display = "none";
-  highlightOverlay.style.boxShadow = "0 0 0 1px rgba(59, 130, 246, 0.5)";
-
-  // Tag name overlay
-  tagNameOverlay = document.createElement("p");
-  tagNameOverlay.style.position = "absolute";
-  tagNameOverlay.style.color = "white";
-  tagNameOverlay.style.fontSize = "12px";
-  tagNameOverlay.style.fontWeight = "bold";
-  tagNameOverlay.style.margin = "0";
-  tagNameOverlay.style.padding = "0";
-  tagNameOverlay.style.zIndex = "999999";
-  tagNameOverlay.style.transition = "all 0.1s ease-out";
-  tagNameOverlay.style.display = "none";
-
-  tagNameContainer = document.createElement("div");
-  tagNameContainer.style.position = "absolute";
-  tagNameContainer.style.backgroundColor = "rgba(0, 0, 0, 0.8)";
-  tagNameContainer.style.borderRadius = "4px";
-  tagNameContainer.style.pointerEvents = "none";
-  tagNameContainer.style.zIndex = "999999";
-  tagNameContainer.style.transition = "all 0.1s ease-out";
-  tagNameContainer.style.display = "none";
-
-  document.body.appendChild(highlightOverlay);
-  document.body.appendChild(tagNameContainer);
-  document.body.appendChild(tagNameOverlay);
-  return highlightOverlay;
+async function getRecentCategories(): Promise<string[]> {
+  try {
+    const res = await chrome.storage.sync.get({
+      recentCategories: [] as string[],
+    });
+    const arr = Array.isArray(res.recentCategories) ? res.recentCategories : [];
+    return arr.slice(0, 8);
+  } catch {
+    return [];
+  }
 }
 
-function positionHighlightOverlay(element: HTMLElement) {
-  if (!highlightOverlay || !tagNameOverlay || !tagNameContainer) return;
-
-  const rect = element.getBoundingClientRect();
-  const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
-  const scrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-  highlightOverlay.style.width = `${rect.width}px`;
-  highlightOverlay.style.height = `${rect.height}px`;
-  highlightOverlay.style.left = `${rect.left + scrollX}px`;
-  highlightOverlay.style.top = `${rect.top + scrollY}px`;
-  highlightOverlay.style.display = "block";
-
-  // Set up tag name text
-  tagNameOverlay.textContent = element.tagName;
-  tagNameOverlay.style.display = "block";
-
-  // Position tag name container (black background box) above the top edge
-  const tagNameHeight = 20; // Height of the background box
-  const tagNamePadding = 4; // Padding inside the box
-  tagNameContainer.style.display = "flex";
-  tagNameContainer.style.left = `${rect.left + scrollX}px`;
-  tagNameContainer.style.top = `${rect.top + scrollY - tagNameHeight}px`;
-  tagNameContainer.style.width = "100px";
-  tagNameContainer.style.height = `20px`;
-  tagNameContainer.style.padding = `3px 6px`;
-
-  // Position tag name text inside the container
-  tagNameOverlay.style.left = `${rect.left + scrollX + tagNamePadding}px`;
-  tagNameOverlay.style.top = `${rect.top + scrollY - tagNameHeight + tagNamePadding}px`;
+async function addRecentCategory(name: string) {
+  try {
+    const res = await chrome.storage.sync.get({
+      recentCategories: [] as string[],
+    });
+    const arr: string[] = Array.isArray(res.recentCategories)
+      ? res.recentCategories
+      : [];
+    const next = [name, ...arr.filter((c) => c !== name)].slice(0, 12);
+    await chrome.storage.sync.set({ recentCategories: next });
+  } catch {
+    // ignore
+  }
 }
 
-function hideHighlightOverlay() {
-  if (highlightOverlay) {
-    highlightOverlay.style.display = "none";
+async function openCategoryOverlayAndHandlePending() {
+  const categories = await (async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "GET_CATEGORIES" });
+      const list: Array<{ _id: string; name: string }> = Array.isArray(
+        res?.categories
+      )
+        ? res.categories
+        : [];
+      if (list.length > 0) return list.map((c) => c.name);
+    } catch {
+      // ignore
+    }
+    // fallback to recents
+    return await getRecentCategories();
+  })();
+
+  const result = await showCategoryOverlay(async () => categories);
+  if (result.kind === "cancel") {
+    selectedCategory = undefined;
+    pendingElementData = null;
+    categoryPromptEnabled = false;
+    return;
   }
-  if (tagNameOverlay) {
-    tagNameOverlay.style.display = "none";
+  const cat = result.category;
+  selectedCategory = cat;
+  if (cat) {
+    void chrome.runtime
+      .sendMessage({ type: "CREATE_CATEGORY", name: cat })
+      .catch(() => {});
+    void addRecentCategory(cat);
   }
-  if (tagNameContainer) {
-    tagNameContainer.style.display = "none";
+  if (pendingElementData) {
+    const toSend = pendingElementData;
+    pendingElementData = null;
+    const category = selectedCategory;
+    selectedCategory = undefined;
+    categoryPromptEnabled = false;
+    try {
+      if (toSend.kind === "image") {
+        await chrome.runtime.sendMessage({
+          type: "SAVE_IMAGE_CAPTURE",
+          data: { ...toSend, category },
+        });
+      } else {
+        await chrome.runtime.sendMessage({
+          type: "SAVE_NON_IMAGE_CAPTURE",
+          data: { ...toSend, category },
+        });
+      }
+    } catch (e) {
+      console.error("❌ Failed to send message after category selection:", e);
+    }
   }
 }
 
@@ -96,13 +128,9 @@ function outlineSelectedElement(event: MouseEvent) {
 
   const hoveredElement = event.target as HTMLElement;
 
-  if (
-    currentHoveredElement === hoveredElement ||
-    hoveredElement === highlightOverlay
-  )
-    return;
+  if (currentHoveredElement === hoveredElement) return;
 
-  createHighlightOverlay();
+  ensureHighlightOverlay();
 
   positionHighlightOverlay(hoveredElement);
   currentHoveredElement = hoveredElement;
@@ -128,20 +156,36 @@ async function handleElementClick(event: MouseEvent) {
   const elementData = captureElement(event.target as HTMLElement);
   console.log("🔍 Captured element data:", elementData);
 
+  if (categoryPromptEnabled && !selectedCategory) {
+    pendingElementData = elementData;
+    toggleSelectionInternal(false);
+    void openCategoryOverlayAndHandlePending();
+    return;
+  }
+
+  const category: string | undefined = categoryPromptEnabled
+    ? selectedCategory
+    : undefined;
+
   try {
     if (elementData.kind === "image") {
       await chrome.runtime.sendMessage({
         type: "SAVE_IMAGE_CAPTURE",
-        data: elementData,
+        data: { ...elementData, category },
       });
     } else {
       await chrome.runtime.sendMessage({
         type: "SAVE_NON_IMAGE_CAPTURE",
-        data: elementData,
+        data: { ...elementData, category },
       });
     }
   } catch (error) {
     console.error("❌ Failed to send message to background:", error);
+  }
+
+  selectedCategory = undefined;
+  if (categoryPromptEnabled) {
+    categoryPromptEnabled = false;
   }
 }
 
@@ -161,27 +205,31 @@ function removeEventListeners() {
 }
 
 export function cleanup() {
-  if (highlightOverlay && highlightOverlay.parentNode) {
-    highlightOverlay.parentNode.removeChild(highlightOverlay);
-    highlightOverlay = null;
-  }
-  if (tagNameOverlay && tagNameOverlay.parentNode) {
-    tagNameOverlay.parentNode.removeChild(tagNameOverlay);
-    tagNameOverlay = null;
-  }
-  if (tagNameContainer && tagNameContainer.parentNode) {
-    tagNameContainer.parentNode.removeChild(tagNameContainer);
-    tagNameContainer = null;
-  }
+  cleanupHighlight();
 }
 
-export function toggleSelectionMode() {
-  isSelecting = !isSelecting;
+function toggleSelectionInternal(nextSelecting: boolean) {
+  isSelecting = nextSelecting;
   if (isSelecting) {
     document.body.style.cursor = "crosshair";
     addEventListeners();
   } else {
     document.body.style.cursor = "default";
     removeEventListeners();
+    categoryPromptEnabled = false;
+    selectedCategory = undefined;
   }
+}
+
+export function toggleSelectionMode(promptForCategory?: boolean) {
+  if (typeof promptForCategory === "boolean") {
+    categoryPromptEnabled = !!promptForCategory;
+    toggleSelectionInternal(true);
+  } else {
+    toggleSelectionInternal(!isSelecting);
+  }
+}
+
+export function setCategoryPromptEnabled(enabled: boolean) {
+  categoryPromptEnabled = enabled;
 }

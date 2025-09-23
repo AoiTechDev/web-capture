@@ -13,12 +13,14 @@ export const captureValidator = v.union(
     timestamp: v.float64(),
     width: v.number(),
     height: v.number(),
+    category: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("text"),
     content: v.string(),
     url: v.string(),
     timestamp: v.float64(),
+    category: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("link"),
@@ -26,12 +28,14 @@ export const captureValidator = v.union(
     text: v.optional(v.string()),
     url: v.string(),
     timestamp: v.float64(),
+    category: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("code"),
     content: v.string(),
     url: v.string(),
     timestamp: v.float64(),
+    category: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("element"),
@@ -39,9 +43,14 @@ export const captureValidator = v.union(
     content: v.optional(v.string()),
     url: v.string(),
     timestamp: v.float64(),
+    category: v.optional(v.string()),
   })
 );
 
 export default defineSchema({
   captures: defineTable(captureValidator).index("by_kind", ["kind"]),
+  categories: defineTable({
+    name: v.string(),
+    createdAt: v.float64(),
+  }).index("by_name", ["name"]),
 });

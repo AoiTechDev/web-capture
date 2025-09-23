@@ -6,7 +6,25 @@ export const internal: InternalApiType = anyApi as unknown as InternalApiType;
 
 export type PublicApiType = {
   captures: {
-    imageUrls: FunctionReference<"query", "public", Record<string, never>, any>;
+    imageUrls: FunctionReference<
+      "query",
+      "public",
+      { category?: string },
+      Array<{
+        _id: Id<"captures">;
+        url: string;
+        width: number;
+        height: number;
+        storageId: Id<"_storage">;
+        category?: string;
+      }>
+    >;
+    listCategories: FunctionReference<
+      "query",
+      "public",
+      Record<string, never>,
+      Array<{ _id: Id<"categories">; name: string }>
+    >;
   };
   upload: {
     generateUploadUrl: FunctionReference<"mutation", "public", any, any>;
@@ -25,21 +43,23 @@ export type PublicApiType = {
               url: string;
               width: number;
             }
-          | { content: string; kind: "text"; timestamp: number; url: string }
+          | { content: string; kind: "text"; timestamp: number; url: string; category?: string }
           | {
               href: string;
               kind: "link";
               text?: string;
               timestamp: number;
               url: string;
+              category?: string;
             }
-          | { content: string; kind: "code"; timestamp: number; url: string }
+          | { content: string; kind: "code"; timestamp: number; url: string; category?: string }
           | {
               content?: string;
               kind: "element";
               tagName: string;
               timestamp: number;
               url: string;
+              category?: string;
             };
       },
       any
@@ -55,6 +75,7 @@ export type PublicApiType = {
         timestamp: number;
         url: string;
         width: number;
+        category?: string;
       },
       any
     >;
@@ -63,6 +84,12 @@ export type PublicApiType = {
       "public",
       { docId: Id<"captures">; storageId: Id<"_storage"> },
       any
+    >;
+    createCategory: FunctionReference<
+      "mutation",
+      "public",
+      { name: string },
+      Id<"categories"> | null
     >;
   };
 };

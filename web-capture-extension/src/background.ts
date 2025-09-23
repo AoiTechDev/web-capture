@@ -10,6 +10,20 @@ const client = new ConvexClient(import.meta.env.CONVEX_URL!);
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
+      if (msg.type === "GET_CATEGORIES") {
+        const categories = await client.query(api.captures.listCategories, {});
+        sendResponse({ categories });
+        return;
+      }
+
+      if (msg.type === "CREATE_CATEGORY") {
+        const id = await client.mutation(api.upload.createCategory, {
+          name: String(msg.name ?? "").trim(),
+        });
+        sendResponse({ id });
+        return;
+      }
+
       if (msg.type === "SAVE_NON_IMAGE_CAPTURE") {
         const captureData = {
           kind: msg.data.kind,
@@ -25,15 +39,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
 
       if (msg.type === "SAVE_IMAGE_CAPTURE") {
-        // 1) Get short-lived upload URL from Convex
         const postUrl = await client.mutation(api.upload.generateUploadUrl, {});
 
-        // 2) Turn the page image URL into a Blob (or if you already have a File/Blob, skip fetch)
         const imageResp = await fetch(msg.data.src);
         if (!imageResp.ok) throw new Error("Failed to download image");
         const blob = await imageResp.blob();
 
-        // 3) POST the blob to the upload URL
         const result = await fetch(postUrl, {
           method: "POST",
           headers: { "Content-Type": blob.type || "application/octet-stream" },
@@ -46,15 +57,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           width: number;
           height: number;
         };
-        // 4) Save the capture with storageId in Convex
         await client.mutation(api.upload.saveImageCapture, {
           storageId,
-          src: msg.data.src, // keep original page src if you like
+          src: msg.data.src, 
           alt: msg.data.alt ?? undefined,
-          url: msg.data.url || "unknown", // page URL
+          url: msg.data.url || "unknown", 
           timestamp: Date.now(),
           width,
           height,
+          category: msg.data.category ?? undefined,
         });
 
         sendResponse({ statusCode: 200, message: "Image capture saved" });

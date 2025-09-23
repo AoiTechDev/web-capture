@@ -1,9 +1,9 @@
 import { detectElementType } from "./detect-element-type";
 
 export function captureElement(element: HTMLElement) {
-  const variant = detectElementType(element); // e.g. { kind: "image", src, alt }
+  const variant = detectElementType(element);
   return {
-    ...variant,                     // puts kind + variant fields at top level
+    ...variant,
     url: window.location.href,
     timestamp: Date.now(),
   };

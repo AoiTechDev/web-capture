@@ -15,7 +15,10 @@ export const uploadCapture = mutation({
     capture: captureValidator,
   }),
   handler: async (ctx, { capture }) => {
-    return await ctx.db.insert("captures", capture);
+    return await ctx.db.insert("captures", {
+      ...capture,
+      category: (capture as any).category ?? "unsorted",
+    });
   },
 });
 
@@ -28,10 +31,11 @@ export const saveImageCapture = mutation({
     timestamp: v.float64(),
     width: v.number(),
     height: v.number(),
+    category: v.optional(v.string()),
   }),
   handler: async (
     ctx,
-    { storageId, src, alt, url, timestamp, width, height }
+    { storageId, src, alt, url, timestamp, width, height, category }
   ) => {
     await ctx.db.insert("captures", {
       kind: "image",
@@ -42,6 +46,7 @@ export const saveImageCapture = mutation({
       timestamp,
       width,
       height,
+      category: category ?? "unsorted",
     });
   },
 });
@@ -54,5 +59,22 @@ export const deleteById = mutation({
   handler: async (ctx, args) => {
     await ctx.db.delete(args.docId);
     await ctx.storage.delete(args.storageId);
+  },
+});
+
+export const createCategory = mutation({
+  args: {
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const name = args.name.trim();
+    if (!name) return null;
+    // ensure unique by name
+    const existing = await ctx.db
+      .query("categories")
+      .withIndex("by_name", (q) => q.eq("name", name))
+      .unique();
+    if (existing) return existing._id;
+    return await ctx.db.insert("categories", { name, createdAt: Date.now() });
   },
 });

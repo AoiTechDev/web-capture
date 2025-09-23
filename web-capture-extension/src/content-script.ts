@@ -5,11 +5,29 @@ window.addEventListener("beforeunload", cleanup);
 document.addEventListener(
   "keydown",
   (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === "S") {
+    const key = e.key.toUpperCase();
+    const hasCtrlOrMeta = e.ctrlKey || e.metaKey; // support Win/Linux Ctrl and macOS Cmd
+
+    // Ctrl/Cmd+Shift+S => instant capture to Unsorted (no prompt)
+    if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "S") {
       e.preventDefault();
       e.stopPropagation();
-      console.log("Capture element - Ctrl+Shift+S pressed");
-      toggleSelectionMode();
+      console.log("Capture element - Ctrl/Cmd+Shift+S pressed");
+      toggleSelectionMode(false);
+    }
+
+    // Ctrl/Cmd+Shift+C => capture with category prompt (mac-friendly)
+    // Also keep Ctrl+Shift+Alt+S as an additional Windows/Linux path
+    if (
+      (hasCtrlOrMeta && e.shiftKey && key === "C") ||
+      (e.ctrlKey && e.shiftKey && e.altKey && key === "S")
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log(
+        "Capture element with category - Ctrl/Cmd+Shift+C or Ctrl+Shift+Alt+S"
+      );
+      toggleSelectionMode(true);
     }
   },
   true
