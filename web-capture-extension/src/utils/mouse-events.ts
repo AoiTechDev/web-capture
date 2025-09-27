@@ -315,6 +315,8 @@ export function startScreenshotMode() {
       url: window.location.href,
       dpr: window.devicePixelRatio || 1,
     };
+    // Ensure overlay removal is painted before capture: wait 2 RAFs
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     try {
       await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect });
     } catch (e) {

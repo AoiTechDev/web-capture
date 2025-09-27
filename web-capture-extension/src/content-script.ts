@@ -12,7 +12,7 @@ document.addEventListener(
     if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "S") {
       e.preventDefault();
       e.stopPropagation();
-      console.log("Capture element - Ctrl/Cmd+Shift+S pressed");
+      console.log("Capture screenshot - Ctrl/Cmd+Shift+S pressed");
       toggleSelectionMode(false);
     }
 
@@ -25,7 +25,7 @@ document.addEventListener(
       e.preventDefault();
       e.stopPropagation();
       console.log(
-        "Capture element with category - Ctrl/Cmd+Shift+C or Ctrl+Shift+Alt+S"
+        "Capture screenshot with category - Ctrl/Cmd+Shift+C or Ctrl+Shift+Alt+S"
       );
       toggleSelectionMode(true);
     }
@@ -34,7 +34,7 @@ document.addEventListener(
     if (hasCtrlOrMeta && e.shiftKey && key === "E") {
       e.preventDefault();
       e.stopPropagation();
-      console.log("Screenshot element - Ctrl/Cmd+Shift+E pressed");
+      console.log("Screenshot mode - Ctrl/Cmd+Shift+E pressed");
       startScreenshotMode();
     }
   },
@@ -45,7 +45,7 @@ console.log("Content script loaded");
 // Respond to background command to start screenshot mode
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "START_SCREENSHOT_MODE") {
-    console.log("Screenshot element - command invoked");
+    console.log("Screenshot mode - command invoked");
     startScreenshotMode();
   }
   if (message?.type === "CROP_AND_UPLOAD") {

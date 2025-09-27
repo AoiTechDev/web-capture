@@ -6,36 +6,30 @@ export const internal: InternalApiType = anyApi as unknown as InternalApiType;
 
 export type PublicApiType = {
   captures: {
-    imageUrls: FunctionReference<
+    imageUrls: FunctionReference<"query", "public", { category?: string }, any>;
+    byCategoryAndKind: FunctionReference<
       "query",
       "public",
-      { category?: string },
-      Array<{
+      {
+        category: string;
+        kind: "image" | "text" | "link" | "code" | "screenshot";
+      },
+      {
         _id: Id<"captures">;
-        url: string;
         width: number;
         height: number;
-        storageId: Id<"_storage">;
+        url?: string;
+        storageId?: Id<"_storage">;
+        alt?: string;
+        kind: "image" | "text" | "link" | "code" | "screenshot";
         category?: string;
-      }>
+      }[]
     >;
     listCategories: FunctionReference<
       "query",
       "public",
       Record<string, never>,
-      Array<{ _id: Id<"categories">; name: string }>
-    >;
-    kindsForCategory: FunctionReference<
-      "query",
-      "public",
-      { category?: string },
-      Array<{ kind: "image" | "text" | "link" | "code" | "element"; count: number }>
-    >;
-    byCategoryAndKind: FunctionReference<
-      "query",
-      "public",
-      { category?: string; kind?: "image" | "text" | "link" | "code" | "element" },
-      any[]
+      any
     >;
   };
   upload: {
@@ -47,6 +41,7 @@ export type PublicApiType = {
         capture:
           | {
               alt?: string;
+              category?: string;
               height: number;
               kind: "image";
               src: string;
@@ -55,23 +50,35 @@ export type PublicApiType = {
               url: string;
               width: number;
             }
-          | { content: string; kind: "text"; timestamp: number; url: string; category?: string }
           | {
+              category?: string;
+              content: string;
+              kind: "text";
+              timestamp: number;
+              url: string;
+            }
+          | {
+              category?: string;
               href: string;
               kind: "link";
               text?: string;
               timestamp: number;
               url: string;
-              category?: string;
             }
-          | { content: string; kind: "code"; timestamp: number; url: string; category?: string }
           | {
+              category?: string;
+              content: string;
+              kind: "code";
+              timestamp: number;
+              url: string;
+            }
+          | {
+              category?: string;
               content?: string;
-              kind: "element";
+              kind: "screenshot";
               tagName: string;
               timestamp: number;
               url: string;
-              category?: string;
             };
       },
       any
@@ -81,13 +88,13 @@ export type PublicApiType = {
       "public",
       {
         alt?: string;
+        category?: string;
         height: number;
         src?: string;
         storageId: Id<"_storage">;
         timestamp: number;
         url: string;
         width: number;
-        category?: string;
       },
       any
     >;
@@ -101,7 +108,7 @@ export type PublicApiType = {
       "mutation",
       "public",
       { name: string },
-      Id<"categories"> | null
+      any
     >;
   };
 };

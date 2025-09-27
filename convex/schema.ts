@@ -38,7 +38,7 @@ export const captureValidator = v.union(
     category: v.optional(v.string()),
   }),
   v.object({
-    kind: v.literal("element"),
+    kind: v.literal("screenshot"),
     tagName: v.string(),
     content: v.optional(v.string()),
     url: v.string(),
@@ -48,7 +48,8 @@ export const captureValidator = v.union(
 );
 
 export default defineSchema({
-  captures: defineTable(captureValidator).index("by_kind", ["kind"]),
+  captures: defineTable(captureValidator)
+  .index("by_category_and_kind", ["category", "kind"]),
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),

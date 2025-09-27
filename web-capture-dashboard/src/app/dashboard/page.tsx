@@ -1,122 +1,67 @@
 "use client";
-
 import { api } from "@/convexApi";
-import { useQuery } from "convex/react";
 import MasonryLayout from "@/components/MasonryLayout";
 import MaximizedImage from "@/components/MaximizedImage";
+import TextWrapLayout from "@/components/TextWrapLayout";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
-import { useEffect, useMemo, useState } from "react";
+import { useStableQuery } from "@/hooks/useStableQuery";
+import { useState } from "react";
 
+type Kind = "image" | "text" | "link" | "code" | "screenshot";
+const kinds: Kind[] = ["image", "text", "link", "code", "screenshot"];
 export default function DashboardPage() {
   const { selected } = useSelectedCategoryStore();
-  // Single fetch of all captures (images have URLs resolved on the server)
-  const all = useQuery(api.captures.byCategoryAndKind, {
-    category: undefined,
-    kind: undefined as any,
-  });
-
-  const [allCache, setAllCache] = useState<any[]>([]);
-  useEffect(() => {
-    if (all !== undefined && Array.isArray(all)) setAllCache(all);
-  }, [all]);
-
-  const allData = (all ?? allCache) as any[];
-  const categoryFilter = selected ?? undefined;
-  const filteredByCategory = useMemo(
-    () =>
-      allData.filter((d) =>
-        categoryFilter ? (d.category ?? "unsorted") === categoryFilter : true
-      ),
-    [allData, categoryFilter]
+  const [selectedKind, setSelectedKind] = useState<Kind>("image");
+  // Use stable cached query results; default to [] to make return typed and non-undefined
+  const captures = useStableQuery(
+    api.captures.byCategoryAndKind,
+    { category: selected || "unsorted", kind: selectedKind },
+    []
   );
 
-  const kindsInCategory = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of filteredByCategory) set.add(d.kind);
-    return Array.from(set) as ("image" | "text" | "link" | "code" | "element")[];
-  }, [filteredByCategory]);
+  // Pass the selected category to the query
 
-  const [activeKind, setActiveKind] = useState<"image" | "text" | "link" | "code" | "element">("image");
-  useEffect(() => {
-    // Ensure activeKind is valid when category changes
-    if (!kindsInCategory.includes(activeKind)) {
-      if (kindsInCategory.includes("image")) setActiveKind("image");
-      else if (kindsInCategory[0]) setActiveKind(kindsInCategory[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryFilter, kindsInCategory.join(",")]);
-
-  const showKindTabs = kindsInCategory.length > 1 || (kindsInCategory[0] ?? "") !== "image";
-
-  const isInitialLoading = all === undefined && allCache.length === 0;
-  if (isInitialLoading)
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        Loading…
-      </div>
-    );
-
+  console.log(captures);
   return (
     <div className="min-h-screen bg-background py-8 w-full">
-      <div className="max-w-7xl mx-auto px-4 relative">
-        {showKindTabs ? (
-          <div className="mb-4 flex gap-2">
-            {(["image", "text", "link", "code", "element"] as const)
-              .filter((k) => kindsInCategory.includes(k))
-              .map((k) => (
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="max-w-7xl mx-auto px-4 py-2">
+          <div
+            role="tablist"
+            aria-label="Capture kind"
+            className="inline-flex items-center gap-1 rounded-xl border border-border bg-card p-1 shadow-sm"
+          >
+            {kinds.map((kind) => {
+              const isActive = selectedKind === kind;
+              return (
                 <button
-                  key={k}
-                  onClick={() => setActiveKind(k)}
-                  className={`px-3 py-1 rounded ${activeKind === k ? "bg-neutral-800 text-white" : "bg-neutral-300 text-black"}`}
+                  key={kind}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-pressed={isActive}
+                  onClick={() => setSelectedKind(kind as Kind)}
+                  className={`px-3 py-1.5 rounded-lg text-sm capitalize transition-colors ${
+                    isActive
+                      ? "bg-neutral-800 text-white"
+                      : "text-neutral-400 hover:bg-neutral-800/30"
+                  }`}
                 >
-                  {k}
+                  {kind}
                 </button>
-              ))}
+              );
+            })}
           </div>
-        ) : <div className="mb-4 h-8"></div>}
-
-        {activeKind === "image" ? (
-          <MasonryLayout
-            items={filteredByCategory
-              .filter((d) => d.kind === "image")
-              .map((d) => ({
-                _id: d._id,
-                url: d.url,
-                width: d.width,
-                height: d.height,
-                storageId: d.storageId,
-                alt: d.alt,
-              })) as any}
-          />
-        ) : (
-          <LocalKindList items={filteredByCategory.filter((d) => d.kind === activeKind)} kind={activeKind} />
+        </div>
+      </div>
+      <div className="max-w-7xl mx-auto px-4 relative">
+        {selectedKind === "image" && (
+          <MasonryLayout items={captures as any} />
+        )}
+        {selectedKind === "text" && (
+          <TextWrapLayout items={captures as any} />
         )}
       </div>
-
       <MaximizedImage />
-    </div>
-  );
-}
-
-function LocalKindList({ items, kind }: { items: any[]; kind: "text" | "link" | "code" | "element" }) {
-  if (!items || items.length === 0) return <div className="text-sm text-gray-400">No items</div>;
-  return (
-    <div className="flex flex-wrap gap-3 items-start">
-      {items.map((it: any) => (
-        <div
-          key={it._id}
-          className="inline-block max-w-[360px] min-w-[220px] p-3 rounded border-border border bg-card "
-        >
-          {kind === "text" || kind === "code" ? (
-            <pre className="whitespace-pre-wrap text-sm">{it.content}</pre>
-          ) : kind === "link" ? (
-            <a href={it.href} target="_blank" className="text-blue-600 underline break-all">{it.text ?? it.href}</a>
-          ) : (
-            <div className="text-xs text-gray-500">{it.tagName}</div>
-          )}
-          <div className="text-xs text-gray-400 mt-1 break-all">{it.url}</div>
-        </div>
-      ))}
     </div>
   );
 }

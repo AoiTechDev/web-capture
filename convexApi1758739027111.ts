@@ -6,7 +6,22 @@ export const internal: InternalApiType = anyApi as unknown as InternalApiType;
 
 export type PublicApiType = {
   captures: {
-    imageUrls: FunctionReference<"query", "public", Record<string, never>, any>;
+    imageUrls: FunctionReference<"query", "public", { category?: string }, any>;
+    byCategoryAndKind: FunctionReference<
+      "query",
+      "public",
+      {
+        category: string;
+        kind: "image" | "text" | "link" | "code" | "screenshot";
+      },
+      any
+    >;
+    listCategories: FunctionReference<
+      "query",
+      "public",
+      Record<string, never>,
+      any
+    >;
   };
   upload: {
     generateUploadUrl: FunctionReference<"mutation", "public", any, any>;
@@ -17,6 +32,7 @@ export type PublicApiType = {
         capture:
           | {
               alt?: string;
+              category?: string;
               height: number;
               kind: "image";
               src: string;
@@ -25,18 +41,32 @@ export type PublicApiType = {
               url: string;
               width: number;
             }
-          | { content: string; kind: "text"; timestamp: number; url: string }
           | {
+              category?: string;
+              content: string;
+              kind: "text";
+              timestamp: number;
+              url: string;
+            }
+          | {
+              category?: string;
               href: string;
               kind: "link";
               text?: string;
               timestamp: number;
               url: string;
             }
-          | { content: string; kind: "code"; timestamp: number; url: string }
           | {
+              category?: string;
+              content: string;
+              kind: "code";
+              timestamp: number;
+              url: string;
+            }
+          | {
+              category?: string;
               content?: string;
-              kind: "element";
+              kind: "screenshot";
               tagName: string;
               timestamp: number;
               url: string;
@@ -49,6 +79,7 @@ export type PublicApiType = {
       "public",
       {
         alt?: string;
+        category?: string;
         height: number;
         src?: string;
         storageId: Id<"_storage">;
@@ -62,6 +93,12 @@ export type PublicApiType = {
       "mutation",
       "public",
       { docId: Id<"captures">; storageId: Id<"_storage"> },
+      any
+    >;
+    createCategory: FunctionReference<
+      "mutation",
+      "public",
+      { name: string },
       any
     >;
   };

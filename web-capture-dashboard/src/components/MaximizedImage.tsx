@@ -1,7 +1,7 @@
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
 import Image from "next/image";
 import { X } from "lucide-react";
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 
 const MaximizedImage = () => {
   const { isOpen, setIsOpen, imageUrl } = useMaximizeImageStore();
@@ -30,7 +30,7 @@ const MaximizedImage = () => {
       </button>
       <div className="relative max-w-[90vw] max-h-[90vh]">
         <Image
-          src={imageUrl}
+          src={imageUrl || ""}
           alt="maximized image"
           width={1200}
           height={800}

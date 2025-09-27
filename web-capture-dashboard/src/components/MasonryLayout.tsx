@@ -121,8 +121,9 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
       // Calculate left position, ensuring it doesn't overflow
       const leftPosition = columnIndex * (columnWidth + GAP);
 
-      // Ensure the item fits within the container
-      if (leftPosition + columnWidth <= containerWidth) {
+      // Ensure the item fits within the container. If containerWidth isn't known yet (0 on first paint),
+      // still compute positions so content isn't blank until a resize triggers measurement.
+      if (containerWidth === 0 || leftPosition + columnWidth <= containerWidth) {
         // Store position
         positions.push({
           left: leftPosition,
@@ -170,7 +171,7 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
               setImageUrl(item.url || "");
             }}
           >
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden   group duration-100 relative cursor-pointer">
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden  group duration-100 relative cursor-pointer">
               <div className="absolute inset-0 bg-black/50 group-hover:flex transition-all duration-100 hidden">
                 <button
                   className="absolute top-5 right-5 cursor-pointer"

@@ -27,14 +27,5 @@
       ],
       "all_frames": true
     }
-  ],
-  "commands": {
-    "screenshot-element": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+E",
-        "mac": "Command+Shift+E"
-      },
-      "description": "Start element screenshot mode"
-    }
-  }
+  ]
 }
