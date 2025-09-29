@@ -19,6 +19,10 @@ module.exports = {
     browser: true,
   },
   plugins: ["only-warn"],
+  parserOptions: {
+    // Enable type-aware rules for TypeScript where needed
+    project,
+  },
   settings: {
     "import/resolver": {
       typescript: {
@@ -30,6 +34,39 @@ module.exports = {
     // Ignore dotfiles
     ".*.js",
     "node_modules/",
+    ".next/",
+    "out/",
+    "dist/",
+    "build/",
+    "coverage/",
+    ".turbo/",
+    "next-env.d.ts",
   ],
-  overrides: [{ files: ["*.js?(x)", "*.ts?(x)"] }],
+  overrides: [
+    { files: ["*.js?(x)", "*.ts?(x)"] },
+    {
+      // Next.js requires default exports for these App/Pages Router files
+      files: [
+        "app/**/page.*",
+        "app/**/layout.*",
+        "app/**/template.*",
+        "app/**/error.*",
+        "app/**/not-found.*",
+        "pages/**/*.tsx",
+        "pages/**/*.ts",
+        "pages/**/*.jsx",
+        "pages/**/*.js",
+        "next.config.js",
+        "next.config.mjs",
+        "middleware.ts",
+        "middleware.ts",
+        "middleware.js",
+        "middleware.mjs",
+        "src/middleware.ts",
+      ],
+      rules: {
+        "import/no-default-export": "off",
+      },
+    },
+  ],
 };
