@@ -14,6 +14,9 @@ export const captureValidator = v.union(
     width: v.number(),
     height: v.number(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
     userId: v.optional(v.string()),
   }),
   v.object({
@@ -22,6 +25,9 @@ export const captureValidator = v.union(
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
     userId: v.optional(v.string()),
   }),
   v.object({
@@ -31,6 +37,9 @@ export const captureValidator = v.union(
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
     userId: v.optional(v.string()),
   }),
   v.object({
@@ -39,6 +48,9 @@ export const captureValidator = v.union(
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
     userId: v.optional(v.string()),
   }),
   v.object({
@@ -48,6 +60,9 @@ export const captureValidator = v.union(
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
     userId: v.optional(v.string()),
   })
 );
@@ -64,4 +79,12 @@ export default defineSchema({
   })
     .index("by_user_and_name", ["userId", "name"]) // for uniqueness per user
     .index("by_user_createdAt", ["userId", "createdAt"]),
+  tags: defineTable({
+    name: v.string(),
+    userId: v.string(),
+    lastUsedAt: v.float64(),
+    useCount: v.number(),
+  })
+    .index("by_user_and_name", ["userId", "name"]) // unique per user
+    .index("by_user_lastUsedAt", ["userId", "lastUsedAt"]),
 });

@@ -43,12 +43,16 @@
   "manifest": {
     "permissions": [
       "cookies",
-      "storage"
+      "storage",
+      "activeTab",
+      "tabs"
     ],
     "host_permissions": [
       "$CLERK_FRONTEND_API/*",
-      "$PLASMO_PUBLIC_CLERK_SYNC_HOST/*"
+      "$PLASMO_PUBLIC_CLERK_SYNC_HOST/*",
+      "<all_urls>"
     ],
     "key": "$CRX_PUBLIC_KEY"
+    
   }
 }

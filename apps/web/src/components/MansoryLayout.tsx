@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
 import { Trash, Maximize2 } from "lucide-react";
 
@@ -66,10 +66,12 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
   const { setIsOpen, setImageUrl } = useMaximizeImageStore();
   const deleteById = useMutation(api.upload.deleteById);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updateLayout = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
+
+        console.log(rect.width);
         const newContainerWidth = rect.width;
         const newColumnWidth = getColumnWidth();
         const newColumns = getColumnsCount(newContainerWidth);
@@ -93,7 +95,7 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
       window.removeEventListener("resize", updateLayout);
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [items]);
 
   const itemPositions = useMemo(() => {
     if (items.length === 0 || columns === 0)

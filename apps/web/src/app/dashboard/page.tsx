@@ -21,11 +21,10 @@ export default function DashboardPage() {
 
   // Pass the selected category to the query
 
-  console.log(captures);
   return (
-    <div className="min-h-screen bg-background py-8 w-full">
+    <div className="min-h-screen bg-background py-8 w-full px-8 max-w-8xl mx-auto">
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="max-w-7xl mx-auto px-4 py-2">
+        <div className=" px-4 py-2">
           <div
             role="tablist"
             aria-label="Capture kind"
@@ -38,7 +37,6 @@ export default function DashboardPage() {
                   key={kind}
                   role="tab"
                   aria-selected={isActive}
-                  aria-pressed={isActive}
                   onClick={() => setSelectedKind(kind as Kind)}
                   className={`px-3 py-1.5 rounded-lg text-sm capitalize transition-colors ${
                     isActive
@@ -53,7 +51,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-      <div className="max-w-7xl mx-auto px-4 relative">
+      <div className=" px-4 relative ">
         {selectedKind === "image" && (
           <MasonryLayout items={captures as any} />
         )}

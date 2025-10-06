@@ -12,10 +12,16 @@ export type CategoryOverlayResult =
   | {
       kind: "confirm";
       category?: string;
+      tags?: string[];
+      title?: string;
+      note?: string;
     }
   | { kind: "cancel" };
 
-export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
+export function showCategoryOverlay(
+  fetchCategories: () => Promise<string[]>,
+  fetchTags?: () => Promise<string[]>
+) {
   return new Promise<CategoryOverlayResult>((resolve) => {
     const overlay = document.createElement("div");
     applyOverlayStyles(overlay);
@@ -27,7 +33,7 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
 
     const input = document.createElement("input");
     input.type = "text";
-    input.placeholder = "Type or pick (Enter to confirm)";
+    input.placeholder = "Category (Enter to confirm)";
     applyInputStyles(input);
     input.addEventListener(
       "keydown",
@@ -35,8 +41,11 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
         e.stopPropagation();
         if (e.key === "Enter") {
           const value = input.value.trim();
+          const tags = collectTags();
+          const titleVal = titleInput.value.trim() || undefined;
+          const noteVal = noteInput.value.trim() || undefined;
           cleanup();
-          resolve({ kind: "confirm", category: value || undefined });
+          resolve({ kind: "confirm", category: value || undefined, tags, title: titleVal, note: noteVal });
         }
         if (e.key === "Escape") {
           cleanup();
@@ -46,6 +55,35 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
       true
     );
     overlay.appendChild(input);
+
+    const tagsInput = document.createElement("input");
+    tagsInput.type = "text";
+    tagsInput.placeholder = "Tags (comma or Enter to add)";
+    applyInputStyles(tagsInput);
+    tagsInput.style.marginTop = "8px";
+    overlay.appendChild(tagsInput);
+
+    const tagChips = document.createElement("div");
+    applySuggestionsStyles(tagChips);
+    overlay.appendChild(tagChips);
+
+    const recentTagsRow = document.createElement("div");
+    applySuggestionsStyles(recentTagsRow);
+    overlay.appendChild(recentTagsRow);
+
+    const titleInput = document.createElement("input");
+    titleInput.type = "text";
+    titleInput.placeholder = "Title (optional)";
+    applyInputStyles(titleInput);
+    titleInput.style.marginTop = "8px";
+    overlay.appendChild(titleInput);
+
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.placeholder = "Note (optional)";
+    applyInputStyles(noteInput);
+    noteInput.style.marginTop = "8px";
+    overlay.appendChild(noteInput);
 
     const suggestions = document.createElement("div");
     applySuggestionsStyles(suggestions);
@@ -62,8 +100,11 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
       (e) => {
         e.stopPropagation();
         const value = input.value.trim();
+        const tags = collectTags();
+        const titleVal = titleInput.value.trim() || undefined;
+        const noteVal = noteInput.value.trim() || undefined;
         cleanup();
-        resolve({ kind: "confirm", category: value || undefined });
+        resolve({ kind: "confirm", category: value || undefined, tags, title: titleVal, note: noteVal });
       },
       false
     );
@@ -76,7 +117,10 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
       (e) => {
         e.stopPropagation();
         cleanup();
-        resolve({ kind: "confirm", category: undefined });
+        const tags = collectTags();
+        const titleVal = titleInput.value.trim() || undefined;
+        const noteVal = noteInput.value.trim() || undefined;
+        resolve({ kind: "confirm", category: undefined, tags, title: titleVal, note: noteVal });
       },
       false
     );
@@ -125,6 +169,24 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
           );
           suggestions.appendChild(chip);
         }
+        if (fetchTags) {
+          const tags = await fetchTags();
+          for (const tag of tags) {
+            const chip = document.createElement("button");
+            chip.textContent = tag;
+            styleChip(chip);
+            chip.addEventListener(
+              "click",
+              (e) => {
+                e.stopPropagation();
+                addTag(tag);
+                tagsInput.focus();
+              },
+              false
+            );
+            recentTagsRow.appendChild(chip);
+          }
+        }
       } catch {
         // ignore
       }
@@ -135,5 +197,50 @@ export function showCategoryOverlay(fetchCategories: () => Promise<string[]>) {
     function cleanup() {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     }
+
+    function addTag(name: string) {
+      const normalized = name.trim().toLowerCase();
+      if (!normalized) return;
+      const exists = Array.from(tagChips.children).some(
+        (c) => (c as HTMLButtonElement).dataset["tag"] === normalized
+      );
+      if (exists) return;
+      const chip = document.createElement("button");
+      chip.textContent = normalized + " ×";
+      chip.dataset["tag"] = normalized;
+      styleChip(chip);
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        tagChips.removeChild(chip);
+      });
+      tagChips.appendChild(chip);
+    }
+
+    function collectTags(): string[] {
+      return Array.from(tagChips.children).map((c) => (c as HTMLButtonElement).dataset["tag"] as string);
+    }
+
+    function parseTagsFromInput() {
+      const raw = tagsInput.value;
+      const parts = raw.split(/[,\n]/g).map((p) => p.trim()).filter(Boolean);
+      for (const p of parts) addTag(p);
+      tagsInput.value = "";
+    }
+
+    tagsInput.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        parseTagsFromInput();
+      }
+      if (e.key === "Backspace" && tagsInput.value === "") {
+        const last = tagChips.lastElementChild;
+        if (last) tagChips.removeChild(last);
+      }
+      if (e.key === "Escape") {
+        cleanup();
+        resolve({ kind: "cancel" });
+      }
+    }, true);
   });
 }

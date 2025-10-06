@@ -1,5 +1,5 @@
 import type { PlasmoCSConfig } from "plasmo"
-import { cleanup, toggleSelectionMode, startScreenshotMode } from "~utlis-content/mouse-events"
+import { cleanup, toggleSelectionMode, startScreenshotMode, exitAllModes } from "~utlis-content/mouse-events"
 
 
 export const config: PlasmoCSConfig = {
@@ -8,32 +8,76 @@ export const config: PlasmoCSConfig = {
 
 window.addEventListener("beforeunload", cleanup)
 
+// Track which mode and shortcut is currently active
+let activeMode: "selection-basic" | "selection-category" | "screenshot" | null = null
+
 console.log("Capture")
 document.addEventListener(
   "keydown",
   (e) => {
+    if (!e.key) return // Guard against undefined key
+    
     const key = e.key.toUpperCase()
     const hasCtrlOrMeta = e.ctrlKey || e.metaKey
 
+    // Escape key - exit any active mode
+    if (key === "ESCAPE") {
+      if (activeMode) {
+        exitAllModes()
+        activeMode = null
+      }
+      return
+    }
+
+    // Ctrl/Cmd + Shift + S - Toggle basic selection mode
     if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "S") {
       e.preventDefault()
       e.stopPropagation()
-      toggleSelectionMode(false)
+      
+      if (activeMode === "selection-basic") {
+        // Exit if same mode is active
+        toggleSelectionMode()
+        activeMode = null
+      } else {
+        // Enter selection mode (basic)
+        toggleSelectionMode(false)
+        activeMode = "selection-basic"
+      }
     }
 
+    // Ctrl/Cmd + Shift + A OR Ctrl + Shift + Alt + S - Toggle selection with category
     if (
-      (hasCtrlOrMeta && e.shiftKey && key === "C") ||
+      (hasCtrlOrMeta && e.shiftKey && key === "A") ||
       (e.ctrlKey && e.shiftKey && e.altKey && key === "S")
     ) {
       e.preventDefault()
       e.stopPropagation()
-      toggleSelectionMode(true)
+      
+      if (activeMode === "selection-category") {
+        // Exit if same mode is active
+        toggleSelectionMode()
+        activeMode = null
+      } else {
+        // Enter selection mode (with category)
+        toggleSelectionMode(true)
+        activeMode = "selection-category"
+      }
     }
 
+    // Ctrl/Cmd + Shift + E - Toggle screenshot mode
     if (hasCtrlOrMeta && e.shiftKey && key === "E") {
       e.preventDefault()
       e.stopPropagation()
-      startScreenshotMode()
+      
+      if (activeMode === "screenshot") {
+        // Exit if same mode is active
+        exitAllModes()
+        activeMode = null
+      } else {
+        // Enter screenshot mode
+        startScreenshotMode()
+        activeMode = "screenshot"
+      }
     }
   },
   true
@@ -42,6 +86,7 @@ document.addEventListener(
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "START_SCREENSHOT_MODE") {
     startScreenshotMode()
+    activeMode = "screenshot"
   }
   if (message?.type === "CROP_AND_UPLOAD") {
     void (async () => {
@@ -71,7 +116,12 @@ chrome.runtime.onMessage.addListener((message) => {
           url: rect.url
         })
       } catch (e) {
-        console.error("Failed to crop/upload screenshot:", e)
+        const errorMessage = e instanceof Error ? e.message : String(e)
+        if (errorMessage.includes("Extension context invalidated")) {
+          alert("Extension was reloaded. Please refresh this page to use the capture features.")
+        } else {
+          console.error("Failed to crop/upload screenshot:", e)
+        }
       }
     })()
   }

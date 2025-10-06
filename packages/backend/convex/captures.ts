@@ -88,3 +88,17 @@ export const listCategories = query({
     return all.map((c) => ({ _id: c._id, name: c.name }));
   },
 });
+
+export const listTags = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [] as Array<{ name: string; useCount: number; lastUsedAt: number }>;
+    const all = await ctx.db
+      .query("tags")
+      .withIndex("by_user_lastUsedAt", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .collect();
+    return all.map((t) => ({ name: t.name, useCount: t.useCount, lastUsedAt: t.lastUsedAt }));
+  },
+});

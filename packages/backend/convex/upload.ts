@@ -38,10 +38,13 @@ export const saveImageCapture = mutation({
     width: v.number(),
     height: v.number(),
     category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
   }),
   handler: async (
     ctx,
-    { storageId, src, alt, url, timestamp, width, height, category }
+    { storageId, src, alt, url, timestamp, width, height, category, tags, title, note }
   ) => {
     const identity = await ctx.auth.getUserIdentity();
     
@@ -56,6 +59,9 @@ export const saveImageCapture = mutation({
       width,
       height,
       category: category ?? "unsorted",
+      tags: (tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean),
+      title,
+      note,
       userId: identity.subject,
     });
   },
@@ -102,5 +108,41 @@ export const createCategory = mutation({
       createdAt: Date.now(),
       userId: identity.subject,
     });
+  },
+});
+
+export const upsertTags = mutation({
+  args: v.object({
+    names: v.array(v.string()),
+  }),
+  handler: async (ctx, { names }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+
+    const normalized = Array.from(
+      new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))
+    );
+    const now = Date.now();
+    for (const name of normalized) {
+      const existing = await ctx.db
+        .query("tags")
+        .withIndex("by_user_and_name", (q) =>
+          q.eq("userId", identity.subject).eq("name", name)
+        )
+        .unique();
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          useCount: (existing as any).useCount + 1,
+          lastUsedAt: now,
+        });
+      } else {
+        await ctx.db.insert("tags", {
+          name,
+          userId: identity.subject,
+          lastUsedAt: now,
+          useCount: 1,
+        });
+      }
+    }
   },
 });

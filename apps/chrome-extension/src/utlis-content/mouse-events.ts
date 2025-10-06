@@ -77,14 +77,37 @@ async function openCategoryOverlayAndHandlePending() {
         ? res.categories
         : [];
       if (list.length > 0) return list.map((c) => c.name);
-    } catch {
-      // ignore
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.includes("Extension context invalidated")) {
+        alert("Extension was reloaded. Please refresh this page to use the capture features.");
+        return [];
+      }
+      // ignore other errors
     }
     // fallback to recents
     return await getRecentCategories();
   })();
 
-  const result = await showCategoryOverlay(async () => categories);
+  const result = await showCategoryOverlay(
+    async () => categories,
+    async () => {
+      try {
+        const res = await chrome.runtime.sendMessage({ type: "GET_TAGS" });
+        const list: Array<{ name: string }> = Array.isArray(res?.tags)
+          ? res.tags
+          : [];
+        if (list.length > 0) {
+          return list.map((t) => t.name);
+        }
+      } catch {}
+      try {
+        const local = await chrome.storage.sync.get({ recentTags: [] as string[] });
+        if (Array.isArray(local.recentTags)) return local.recentTags.slice(0, 12);
+      } catch {}
+      return [] as string[];
+    }
+  );
   if (result.kind === "cancel") {
     selectedCategory = undefined;
     pendingElementData = null;
@@ -93,10 +116,31 @@ async function openCategoryOverlayAndHandlePending() {
   }
   const cat = result.category;
   selectedCategory = cat;
+  const tags: string[] | undefined = Array.isArray(result.tags)
+    ? result.tags
+    : undefined;
+  const title = result.title;
+  const note = result.note;
+  if (tags && tags.length > 0) {
+    try {
+      const res = await chrome.storage.sync.get({ recentTags: [] as string[] });
+      const existing: string[] = Array.isArray(res.recentTags) ? res.recentTags : [];
+      const merged = Array.from(new Set([...
+        tags.map((t) => t.trim().toLowerCase()).filter(Boolean),
+        ...existing
+      ])).slice(0, 24);
+      await chrome.storage.sync.set({ recentTags: merged });
+    } catch {}
+  }
   if (cat) {
     void chrome.runtime
       .sendMessage({ type: "CREATE_CATEGORY", name: cat })
-      .catch(() => {});
+      .catch((e) => {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        if (errorMessage.includes("Extension context invalidated")) {
+          // Error will be shown when trying to save the capture
+        }
+      });
     void addRecentCategory(cat);
   }
   if (pendingElementData) {
@@ -109,16 +153,21 @@ async function openCategoryOverlayAndHandlePending() {
       if (toSend.kind === "image") {
         await chrome.runtime.sendMessage({
           type: "SAVE_IMAGE_CAPTURE",
-          data: { ...toSend, category },
+          data: { ...toSend, category, tags, title, note },
         });
       } else {
         await chrome.runtime.sendMessage({
           type: "SAVE_NON_IMAGE_CAPTURE",
-          data: { ...toSend, category },
+          data: { ...toSend, category, tags, title, note },
         });
       }
     } catch (e) {
-      console.error("❌ Failed to send message after category selection:", e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.includes("Extension context invalidated")) {
+        alert("Extension was reloaded. Please refresh this page to use the capture features.");
+      } else {
+        console.error("❌ Failed to send message after category selection:", e);
+      }
     }
   }
 }
@@ -180,7 +229,12 @@ async function handleElementClick(event: MouseEvent) {
       });
     }
   } catch (error) {
-    console.error("❌ Failed to send message to background:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes("Extension context invalidated")) {
+      alert("Extension was reloaded. Please refresh this page to use the capture features.");
+    } else {
+      console.error("❌ Failed to send message to background:", error);
+    }
   }
 
   selectedCategory = undefined;
@@ -320,7 +374,12 @@ export function startScreenshotMode() {
     try {
       await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect });
     } catch (e) {
-      console.error("❌ Failed to request region screenshot:", e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.includes("Extension context invalidated")) {
+        alert("Extension was reloaded. Please refresh this page to use the capture features.");
+      } else {
+        console.error("❌ Failed to request region screenshot:", e);
+      }
     }
   };
 
@@ -356,4 +415,21 @@ export function startScreenshotMode() {
   regionOverlay.addEventListener("mouseup", onMouseUp, true);
   window.addEventListener("keydown", onKeyDown, true);
   document.body.appendChild(regionOverlay);
+}
+
+// Helper function to check if selection mode is active
+export function isInSelectionMode(): boolean {
+  return isSelecting;
+}
+
+// Helper function to exit all modes
+export function exitAllModes() {
+  // Exit selection mode if active
+  if (isSelecting) {
+    toggleSelectionInternal(false);
+  }
+  // Exit screenshot mode if active
+  if (regionOverlay) {
+    destroyRegionOverlay();
+  }
 }

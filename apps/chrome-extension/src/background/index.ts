@@ -65,6 +65,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
+        if (msg.type === 'GET_TAGS') {
+          const tags = await convex.query(api.captures.listTags, {});
+          sendResponse({ tags });
+          return;
+        }
+
         if (msg.type === 'CREATE_CATEGORY') {
           const id = await convex.mutation(api.upload.createCategory, {
             name: String(msg.name ?? '').trim(),
@@ -80,6 +86,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             url: msg.data.url || 'unknown',
             timestamp: Date.now(),
           };
+          if (Array.isArray((captureData as any).tags)) {
+            try {
+              await convex.mutation(api.upload.upsertTags, { names: (captureData as any).tags });
+            } catch {}
+          }
           await convex.mutation(api.upload.uploadCapture, {
             capture: captureData,
           });
@@ -117,7 +128,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             width,
             height,
             category: msg.data.category ?? undefined,
+            tags: Array.isArray(msg.data.tags) ? msg.data.tags : undefined,
+            title: typeof msg.data.title === 'string' ? msg.data.title : undefined,
+            note: typeof msg.data.note === 'string' ? msg.data.note : undefined,
           });
+          if (Array.isArray(msg.data.tags)) {
+            try {
+              await convex.mutation(api.upload.upsertTags, { names: msg.data.tags });
+            } catch {}
+          }
 
           sendResponse({ statusCode: 200, message: 'Image capture saved' });
           return;
@@ -169,7 +188,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             timestamp: Date.now(),
             width: msg.width,
             height: msg.height,
+            category: msg.category ?? undefined,
+            tags: Array.isArray(msg.tags) ? msg.tags : undefined,
+            title: typeof msg.title === 'string' ? msg.title : undefined,
+            note: typeof msg.note === 'string' ? msg.note : undefined,
           });
+          if (Array.isArray(msg.tags)) {
+            try {
+              await convex.mutation(api.upload.upsertTags, { names: msg.tags });
+            } catch {}
+          }
 
           sendResponse({ statusCode: 200, message: 'Screenshot saved' });
           return;
@@ -196,7 +224,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             timestamp: Date.now(),
             width: msg.width,
             height: msg.height,
+            category: msg.category ?? undefined,
+            tags: Array.isArray(msg.tags) ? msg.tags : undefined,
+            title: typeof msg.title === 'string' ? msg.title : undefined,
+            note: typeof msg.note === 'string' ? msg.note : undefined,
           });
+          if (Array.isArray(msg.tags)) {
+            try {
+              await convex.mutation(api.upload.upsertTags, { names: msg.tags });
+            } catch {}
+          }
 
           sendResponse({ statusCode: 200, message: 'Screenshot saved' });
           return;
