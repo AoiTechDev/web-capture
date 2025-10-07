@@ -1,21 +1,90 @@
 @import "tailwindcss";
 
 :root {
-  --background: #08090a; /* Dark Background */
-  
-  --card: #0f1011; /* Secondary Dark */
-  --border: #1b1c1d; /* Medium Gray */
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-card: var(--card);
-  --color-border: var(--border);
-
+  --background: #08090a;
+  --blue: #00D9FF;
+  --purple: #B026FF;
+  --green: #00FF94;
+  --card: #0f1011;
+  --border: #1b1c1d;
 }
 
 body {
-  background: var(--background);
+  background: linear-gradient(135deg, #0A0A0F 0%, #1A0B2E 25%, #16213E 50%, #0F1B3C 75%, #0A0A0F 100%);
   color: white;
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #0A0A0F 0%, #1A0B2E 25%, #16213E 50%, #0F1B3C 75%, #0A0A0F 100%);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.neon-glow {
+  box-shadow: 0 0 20px rgba(0, 217, 255, 0.3), 0 0 40px rgba(176, 38, 255, 0.2);
+}
+
+.floating-animation {
+  animation: float 6s ease-in-out infinite;
+}
+
+.floating-animation:nth-child(2) {
+  animation-delay: -2s;
+}
+
+.floating-animation:nth-child(3) {
+  animation-delay: -4s;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  33% {
+    transform: translateY(-20px) rotate(2deg);
+  }
+  66% {
+    transform: translateY(-10px) rotate(-1deg);
+  }
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #00D9FF 0%, #B026FF 50%, #00FF94 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.brutalist-shadow {
+  box-shadow: 8px 8px 0px rgba(0, 217, 255, 0.3), 16px 16px 0px rgba(176, 38, 255, 0.2);
+}
+
+.hover-scale {
+  transition: transform 0.3s ease;
+}
+
+.hover-scale:hover {
+  transform: scale(1.05);
+}
+
+.capture-animation {
+  animation: capture-pulse 2s ease-in-out infinite;
+}
+
+@keyframes capture-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 217, 255, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 20px rgba(0, 217, 255, 0);
+  }
 }

@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
         hostname: "*.convex.cloud",
         pathname: "/api/storage/**",
       },
+      {
+        protocol: "https",
+        hostname: "storage.googleapis.com",
+      },
     ],
   },
 };

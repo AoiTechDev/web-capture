@@ -1,17 +1,25 @@
-import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
-import Link from "next/link";
-import Image from "next/image";
-
+import Header from "@/components/landing-page/Header";
+import Hero from "@/components/landing-page/Hero";
+import Features from "@/components/landing-page/Features";
+import HowItWorks from "@/components/landing-page/HowItWorks";
+import UseCases from "@/components/landing-page/UseCases";
+import Stats from "@/components/landing-page/Stats";
+import CTA from "@/components/landing-page/CTA";
+import Footer from "@/components/landing-page/Footer";
 
 export default function Home() {
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-    <SignedIn>
-            <UserButton />
-          </SignedIn>
-          <SignedOut>
-            asd
-          </SignedOut>
+    <div className="gradient-bg text-white overflow-x-hidden">
+      <Header />
+      <main>
+        <Hero />
+        <Features />
+        <HowItWorks />
+        <UseCases />
+        {/* <Stats /> */}
+        <CTA />
+      </main>
+      <Footer />
     </div>
   );
 }
