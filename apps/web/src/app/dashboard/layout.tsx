@@ -9,7 +9,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!userId) redirect("/sign-in"); // Not authed → send to sign-in
 
   return (
-    <div className="flex">
+    <div className="flex h-screen gradient-bg text-white overflow-x-hidden">
       <Sidebar />
       {children}
     </div>

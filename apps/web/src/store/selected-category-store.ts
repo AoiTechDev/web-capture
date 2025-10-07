@@ -6,7 +6,7 @@ interface SelectedCategoryState {
 }
 
 export const useSelectedCategoryStore = create<SelectedCategoryState>()((set) => ({
-  selected: null,
+  selected: "unsorted",
   setSelected: (name) => set({ selected: name }),
 }));
 
