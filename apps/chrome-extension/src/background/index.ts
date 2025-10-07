@@ -10,7 +10,6 @@ if (!publishableKey) {
   throw new Error('Please add the PLASMO_PUBLIC_CLERK_PUBLISHABLE_KEY to the .env.development file')
 }
 
-// Convex client for uploads and queries
 const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 
 async function getToken() {
@@ -19,7 +18,6 @@ async function getToken() {
     syncHost: process.env.PLASMO_PUBLIC_CLERK_SYNC_HOST
   });
 
-  // is there is no signed in user then return null
   if (!clerk.session) {
     return null;
   }
@@ -43,22 +41,26 @@ async function getToken() {
   }
   return token ?? null
 }
-// asdf
-// create a listener to listen for messages from content scripts
-// NOTE: A runtime listener cannot be async.
-//       It must return true, in order to keep the connection open and send a response later.
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   console.log('[Service Worker]: Handling message')
   ;(async () => {
     try {
-      // Ensure Convex has current auth token, if available
       const token = await getToken();
       console.log('[Service Worker]: Setting Convex auth token:', token ? 'present' : 'null')
       if (token) convex.setAuth(async () => token);
       else convex.setAuth(async () => null);
 
-      // Route capture-related actions
       if (msg && typeof msg === 'object' && 'type' in msg) {
+
+        // Check authentication status
+        if (msg.type === 'CHECK_AUTH') {
+          const isAuthenticated = token !== null;
+          sendResponse({ isAuthenticated, token: isAuthenticated ? token : null });
+          return;
+        }
+
+
         if (msg.type === 'GET_CATEGORIES') {
           const categories = await convex.query(api.captures.listCategories, {});
           sendResponse({ categories });
@@ -240,7 +242,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
-      // Fallback: respond with current token for legacy callers
       const tokenForCaller = await getToken();
       console.log('[Service Worker]: Sending token in response')
       console.log('[Service Worker]:', tokenForCaller)

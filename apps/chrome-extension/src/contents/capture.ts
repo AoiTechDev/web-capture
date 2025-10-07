@@ -8,19 +8,95 @@ export const config: PlasmoCSConfig = {
 
 window.addEventListener("beforeunload", cleanup)
 
-// Track which mode and shortcut is currently active
 let activeMode: "selection-basic" | "selection-category" | "screenshot" | null = null
+
+async function checkAuth(): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'CHECK_AUTH' }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Content Script]: Error checking auth:', chrome.runtime.lastError)
+        resolve(false)
+        return
+      }
+      resolve(response?.isAuthenticated ?? false)
+    })
+  })
+}
+
+function showAuthNotification() {
+  const notification = document.createElement('div')
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 16px 24px;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    z-index: 999999;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    animation: slideIn 0.3s ease-out;
+    max-width: 320px;
+  `
+  notification.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M10 0C4.48 0 0 4.48 0 10C0 15.52 4.48 20 10 20C15.52 20 20 15.52 20 10C20 4.48 15.52 0 10 0ZM9 15V13H11V15H9ZM11 11H9V5H11V11Z" fill="white"/>
+      </svg>
+      <div>
+        <div style="font-weight: 600; margin-bottom: 4px;">Authentication Required</div>
+        <div style="font-size: 12px; opacity: 0.9;">Please sign in to use capture features</div>
+      </div>
+    </div>
+  `
+  
+  const style = document.createElement('style')
+  style.textContent = `
+    @keyframes slideIn {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    @keyframes slideOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+    }
+  `
+  document.head.appendChild(style)
+  document.body.appendChild(notification)
+  
+  setTimeout(() => {
+    notification.style.animation = 'slideOut 0.3s ease-out'
+    setTimeout(() => {
+      notification.remove()
+      style.remove()
+    }, 300)
+  }, 4000)
+}
 
 console.log("Capture")
 document.addEventListener(
   "keydown",
   (e) => {
-    if (!e.key) return // Guard against undefined key
+    if (!e.key) return 
     
     const key = e.key.toUpperCase()
     const hasCtrlOrMeta = e.ctrlKey || e.metaKey
 
-    // Escape key - exit any active mode
     if (key === "ESCAPE") {
       if (activeMode) {
         exitAllModes()
@@ -29,19 +105,23 @@ document.addEventListener(
       return
     }
 
-    // Ctrl/Cmd + Shift + S - Toggle basic selection mode
     if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "S") {
       e.preventDefault()
       e.stopPropagation()
       
       if (activeMode === "selection-basic") {
-        // Exit if same mode is active
         toggleSelectionMode()
         activeMode = null
       } else {
-        // Enter selection mode (basic)
-        toggleSelectionMode(false)
-        activeMode = "selection-basic"
+        void (async () => {
+          const isAuthenticated = await checkAuth()
+          if (!isAuthenticated) {
+            showAuthNotification()
+            return
+          }
+          toggleSelectionMode(false)
+          activeMode = "selection-basic"
+        })()
       }
     }
 
@@ -58,9 +138,17 @@ document.addEventListener(
         toggleSelectionMode()
         activeMode = null
       } else {
-        // Enter selection mode (with category)
-        toggleSelectionMode(true)
-        activeMode = "selection-category"
+        // Check auth before entering mode
+        void (async () => {
+          const isAuthenticated = await checkAuth()
+          if (!isAuthenticated) {
+            showAuthNotification()
+            return
+          }
+          // Enter selection mode (with category)
+          toggleSelectionMode(true)
+          activeMode = "selection-category"
+        })()
       }
     }
 
@@ -70,13 +158,18 @@ document.addEventListener(
       e.stopPropagation()
       
       if (activeMode === "screenshot") {
-        // Exit if same mode is active
         exitAllModes()
         activeMode = null
       } else {
-        // Enter screenshot mode
-        startScreenshotMode()
-        activeMode = "screenshot"
+        void (async () => {
+          const isAuthenticated = await checkAuth()
+          if (!isAuthenticated) {
+            showAuthNotification()
+            return
+          }
+          startScreenshotMode()
+          activeMode = "screenshot"
+        })()
       }
     }
   },
@@ -84,9 +177,22 @@ document.addEventListener(
 )
 
 chrome.runtime.onMessage.addListener((message) => {
+
+  if (message?.type === "GET_TOKEN") {
+    chrome.runtime.sendMessage({ type: "GET_TOKEN" }, (response) => { 
+      console.log('[Content Script]: Response from background', response)
+    })
+  }
   if (message?.type === "START_SCREENSHOT_MODE") {
-    startScreenshotMode()
-    activeMode = "screenshot"
+    void (async () => {
+      const isAuthenticated = await checkAuth()
+      if (!isAuthenticated) {
+        showAuthNotification()
+        return
+      }
+      startScreenshotMode()
+      activeMode = "screenshot"
+    })()
   }
   if (message?.type === "CROP_AND_UPLOAD") {
     void (async () => {
@@ -125,6 +231,8 @@ chrome.runtime.onMessage.addListener((message) => {
       }
     })()
   }
+
+
 })
 
 
