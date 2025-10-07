@@ -18,6 +18,8 @@ export default function DashboardPage() {
     { category: selected || "unsorted", kind: selectedKind },
     []
   );
+
+  console.log(captures);
   const tabs = useMemo(
     () => [
       { key: "image" as const, label: "Images", Icon: Images },
@@ -29,7 +31,6 @@ export default function DashboardPage() {
     []
   );
 
-  // Pass the selected category to the query
 
   return (
     <main id="main-content" className="flex-1 flex flex-col w-full">

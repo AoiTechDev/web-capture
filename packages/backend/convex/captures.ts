@@ -65,6 +65,7 @@ export const byCategoryAndKind = query({
         imagesWithStorage.map(async (d) => ({
           ...d,
           url: await ctx.storage.getUrl(d.storageId!),
+          pageUrl: d.url,
         }))
       );
     }

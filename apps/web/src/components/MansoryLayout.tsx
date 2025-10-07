@@ -17,6 +17,8 @@ interface MasonryItem {
   src?: string;
   alt?: string;
   storageId?: string;
+  pageUrl?: string;
+  tags?: string[];
 }
 
 interface MasonryLayoutProps {
@@ -27,6 +29,7 @@ const COLUMN_WIDTH = 280;
 const GAP = 16;
 const MIN_HEIGHT = 100;
 const MAX_HEIGHT = 600;
+const FOOTER_HEIGHT = 80; // Approximate height for URL + tags footer
 
 // Responsive breakpoints
 const getColumnWidth = () => {
@@ -71,7 +74,6 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
 
-        console.log(rect.width);
         const newContainerWidth = rect.width;
         const newColumnWidth = getColumnWidth();
         const newColumns = getColumnsCount(newContainerWidth);
@@ -85,7 +87,6 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
     updateLayout();
     window.addEventListener("resize", updateLayout);
 
-    // Use ResizeObserver to detect container size changes
     const resizeObserver = new ResizeObserver(updateLayout);
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
@@ -110,33 +111,29 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
     }> = [];
 
     items.forEach((item) => {
-      // Find the shortest column
       const shortestColumnHeight = Math.min(...columnHeights);
       const columnIndex = columnHeights.indexOf(shortestColumnHeight);
 
-      // Calculate image height for this item
-      const itemHeight = calculateImageHeight(
+      const imageHeight = calculateImageHeight(
         item.width,
         item.height,
         columnWidth
       );
+      
+      // Add footer height to total card height
+      const totalCardHeight = imageHeight + FOOTER_HEIGHT;
 
-      // Calculate left position, ensuring it doesn't overflow
       const leftPosition = columnIndex * (columnWidth + GAP);
 
-      // Ensure the item fits within the container. If containerWidth isn't known yet (0 on first paint),
-      // still compute positions so content isn't blank until a resize triggers measurement.
       if (containerWidth === 0 || leftPosition + columnWidth <= containerWidth) {
-        // Store position
         positions.push({
           left: leftPosition,
           top: shortestColumnHeight,
           width: columnWidth,
-          height: itemHeight,
+          height: totalCardHeight,
         });
 
-        // Update column height
-        columnHeights[columnIndex] = shortestColumnHeight + itemHeight + GAP;
+        columnHeights[columnIndex] = shortestColumnHeight + totalCardHeight + GAP;
       }
     });
 
@@ -169,15 +166,12 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
               width: `${position.width}px`,
               height: `${position.height}px`,
             }}
-            onClick={() => {
-              setIsOpen(true);
-              setImageUrl(item.url || "");
-            }}
+           
           >
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden  group duration-100 relative cursor-pointer">
-              <div className="absolute inset-0 bg-black/50 group-hover:flex transition-all duration-100 hidden">
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden group duration-100 relative cursor-pointer flex flex-col h-full">
+              <div className="absolute inset-0 bg-black/70 group-hover:flex gap-4 justify-center items-center transition-all duration-100 hidden z-10">
                 <button
-                  className="absolute top-5 right-5 cursor-pointer"
+                  className="  cursor-pointer p-2 bg-red-500 rounded-xl"
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteById({
@@ -186,27 +180,58 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                     });
                   }}
                 >
-                  <Trash className="w-7 h-7 text-red-300" />
+                  <Trash className="w-7 h-7 text-white" />
                 </button>
 
-                <button className="absolute top-1/2 right-1/2 -translate-y-1/2 translate-x-1/2 ">
-                  <Maximize2 className="w-15 h-15 text-white" />
+                <button className=" p-2 bg-white/30 rounded-xl cursor-pointer" 
+                 onClick={() => {
+              setIsOpen(true);
+              setImageUrl(item.url || "");
+            }}>
+                  <Maximize2 className="w-7 h-7 text-white " />
                 </button>
               </div>
-              {item.url && (
-                <Image
-                  src={item.url}
-                  alt={item.alt || ""}
-                  width={position.width}
-                  height={position.height}
-                  style={{
-                    objectFit: "cover",
-                    width: "100%",
-                    height: "100%",
-                  }}
-                  className="rounded-t-2xl"
-                />
-              )}
+              
+              {/* Image */}
+              <div className="flex-1 relative overflow-hidden">
+                {item.url && (
+                  <Image
+                    src={item.url}
+                    alt={item.alt || ""}
+                    width={position.width}
+                    height={position.height}
+                    style={{
+                      objectFit: "cover",
+                      width: "100%",
+                      height: "100%",
+                    }}
+                  />
+                )}
+              </div>
+              
+              {/* Footer with URL and Tags */}
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-4 space-y-2">
+                {/* Page URL */}
+                {item.pageUrl && (
+                  <div className="text-gray-300 text-xs font-medium truncate">
+                    {new URL(item.pageUrl).hostname}
+                  </div>
+                )}
+                
+                {/* Tags */}
+                {item.tags && item.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {item.tags.map((tag, idx) => (
+                      <span
+                        key={idx}
+                        className="px-3 py-1 bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-medium rounded-full transition-colors"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         );
