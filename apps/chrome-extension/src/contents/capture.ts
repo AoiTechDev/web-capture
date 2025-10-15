@@ -9,6 +9,10 @@ export const config: PlasmoCSConfig = {
 window.addEventListener("beforeunload", cleanup)
 
 let activeMode: "selection-basic" | "selection-category" | "screenshot" | null = null
+let searchOverlayEl: HTMLDivElement | null = null
+let searchInputEl: HTMLInputElement | null = null
+let searchResultsEl: HTMLDivElement | null = null
+let isSearchOpen = false
 
 async function checkAuth(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -102,6 +106,9 @@ document.addEventListener(
         exitAllModes()
         activeMode = null
       }
+      if (isSearchOpen) {
+        closeSearchOverlay()
+      }
       return
     }
 
@@ -172,6 +179,20 @@ document.addEventListener(
         })()
       }
     }
+
+    // Ctrl/Cmd + Shift + K - Open search overlay
+    if (hasCtrlOrMeta && e.shiftKey && key === "K") {
+      e.preventDefault()
+      e.stopPropagation()
+      void (async () => {
+        const isAuthenticated = await checkAuth()
+        if (!isAuthenticated) {
+          showAuthNotification()
+          return
+        }
+        toggleSearchOverlay()
+      })()
+    }
   },
   true
 )
@@ -235,4 +256,180 @@ chrome.runtime.onMessage.addListener((message) => {
 
 })
 
+
+function toggleSearchOverlay() {
+  if (isSearchOpen) {
+    closeSearchOverlay()
+  } else {
+    openSearchOverlay()
+  }
+}
+
+function openSearchOverlay() {
+  if (isSearchOpen) return
+  isSearchOpen = true
+  if (!searchOverlayEl) {
+    searchOverlayEl = document.createElement('div')
+    searchOverlayEl.style.position = 'fixed'
+    searchOverlayEl.style.top = '20px'
+    searchOverlayEl.style.left = '50%'
+    searchOverlayEl.style.transform = 'translateX(-50%)'
+    searchOverlayEl.style.zIndex = '1000001'
+    searchOverlayEl.style.background = '#0b0f1a'
+    searchOverlayEl.style.color = '#e5e7eb'
+    searchOverlayEl.style.border = '1px solid #243047'
+    searchOverlayEl.style.borderRadius = '12px'
+    searchOverlayEl.style.padding = '12px'
+    searchOverlayEl.style.boxShadow = '0 12px 40px rgba(0,0,0,0.5)'
+    searchOverlayEl.style.width = '560px'
+    searchOverlayEl.style.maxWidth = '90vw'
+
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.placeholder = 'Search your captures...'
+    input.style.width = '100%'
+    input.style.padding = '10px 12px'
+    input.style.border = '1px solid #334155'
+    input.style.borderRadius = '8px'
+    input.style.background = '#0f172a'
+    input.style.color = '#f3f4f6'
+    input.style.outline = 'none'
+    input.addEventListener('keydown', onSearchKeyDown, true)
+    input.addEventListener('input', debounceSearch, true)
+    searchOverlayEl.appendChild(input)
+    searchInputEl = input
+
+    const results = document.createElement('div')
+    results.style.marginTop = '10px'
+    results.style.maxHeight = '60vh'
+    results.style.overflow = 'auto'
+    results.style.display = 'grid'
+    results.style.gridTemplateColumns = '1fr'
+    results.style.gap = '8px'
+    searchOverlayEl.appendChild(results)
+    searchResultsEl = results
+  }
+  document.body.appendChild(searchOverlayEl!)
+  setTimeout(() => searchInputEl?.focus(), 0)
+}
+
+function closeSearchOverlay() {
+  if (!isSearchOpen) return
+  isSearchOpen = false
+  if (searchOverlayEl && searchOverlayEl.parentNode) {
+    searchOverlayEl.parentNode.removeChild(searchOverlayEl)
+  }
+}
+
+function onSearchKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.stopPropagation()
+    closeSearchOverlay()
+  }
+}
+
+let searchDebounce: number | null = null
+function debounceSearch() {
+  if (searchDebounce) window.clearTimeout(searchDebounce)
+  searchDebounce = window.setTimeout(runSearch, 180)
+}
+
+async function runSearch() {
+  const q = (searchInputEl?.value ?? '').trim()
+  if (!q) {
+    renderSearchResults([])
+    return
+  }
+  try {
+    // Prefer semantic search; fallback to metadata search if model not available
+    const resp = await new Promise<{ results: any[]; mode?: string }>((resolve) => {
+      chrome.runtime.sendMessage({ type: 'SEARCH_SEMANTIC', q, limit: 30 }, (r) => resolve(r))
+    })
+    if (resp && Array.isArray(resp.results)) {
+      renderSearchResults(resp.results)
+      return
+    }
+    const fallback = await new Promise<{ results: any[] }>((resolve) => {
+      chrome.runtime.sendMessage({ type: 'SEARCH_CAPTURES', q, limit: 30 }, (r) => resolve(r))
+    })
+    renderSearchResults(Array.isArray(fallback?.results) ? fallback.results : [])
+  } catch (e) {
+    renderSearchResults([])
+  }
+}
+
+function renderSearchResults(results: any[]) {
+  if (!searchResultsEl) return
+  searchResultsEl.innerHTML = ''
+  if (!results.length) {
+    const empty = document.createElement('div')
+    empty.textContent = 'No results'
+    empty.style.color = '#9ca3af'
+    empty.style.fontSize = '14px'
+    searchResultsEl.appendChild(empty)
+    return
+  }
+  for (const item of results) {
+    const row = document.createElement('div')
+    row.style.display = 'grid'
+    row.style.gridTemplateColumns = '56px 1fr'
+    row.style.gap = '10px'
+    row.style.alignItems = 'center'
+    row.style.padding = '8px'
+    row.style.border = '1px solid #243047'
+    row.style.borderRadius = '8px'
+    row.style.background = '#0b1220'
+    row.style.cursor = 'pointer'
+    row.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (item.pageUrl) window.open(item.pageUrl, '_blank')
+      else if (item.imageUrl) window.open(item.imageUrl, '_blank')
+      else if (item.id) window.open(item.pageUrl || 'about:blank', '_blank')
+      closeSearchOverlay()
+    })
+
+    const thumb = document.createElement('div')
+    thumb.style.width = '56px'
+    thumb.style.height = '42px'
+    thumb.style.background = '#111827'
+    thumb.style.border = '1px solid #1f2a44'
+    thumb.style.borderRadius = '6px'
+    thumb.style.overflow = 'hidden'
+    if (item.imageUrl) {
+      const img = document.createElement('img')
+      img.src = item.imageUrl
+      img.style.width = '100%'
+      img.style.height = '100%'
+      img.style.objectFit = 'cover'
+      thumb.appendChild(img)
+    } else {
+      thumb.textContent = item.kind?.toUpperCase?.() || 'CAP'
+      thumb.style.display = 'flex'
+      thumb.style.alignItems = 'center'
+      thumb.style.justifyContent = 'center'
+      thumb.style.fontSize = '10px'
+      thumb.style.color = '#9ca3af'
+    }
+
+    const meta = document.createElement('div')
+    const title = document.createElement('div')
+    title.textContent = item.title || item.alt || (new URL(item.pageUrl || 'about:blank').host || 'Capture')
+    title.style.fontSize = '14px'
+    title.style.fontWeight = '600'
+    title.style.color = '#e5e7eb'
+    const sub = document.createElement('div')
+    const host = (() => { try { return item.pageUrl ? new URL(item.pageUrl).host : '' } catch { return '' } })()
+    const tagText = Array.isArray(item.tags) && item.tags.length ? ` #${item.tags.slice(0,3).join(' #')}` : ''
+    sub.textContent = [host, item.category].filter(Boolean).join(' • ') + tagText
+    sub.style.fontSize = '12px'
+    sub.style.color = '#94a3b8'
+
+    meta.appendChild(title)
+    meta.appendChild(sub)
+
+    row.appendChild(thumb)
+    row.appendChild(meta)
+    searchResultsEl.appendChild(row)
+  }
+}
 
