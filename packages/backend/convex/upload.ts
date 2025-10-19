@@ -146,3 +146,38 @@ export const upsertTags = mutation({
     }
   },
 });
+
+export const reassignCaptureCategory = mutation({
+  args: v.object({
+    docId: v.id("captures"),
+    newCategory: v.string(),
+  }),
+  handler: async (ctx, { docId, newCategory }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+
+    const capture = await ctx.db.get(docId);
+    if (!capture || (capture as any).userId !== identity.subject) {
+      throw new Error("Not found or permission denied");
+    }
+
+    const name = newCategory.trim();
+    const categoryName = name.length > 0 ? name : "unsorted";
+
+    const existing = await ctx.db
+      .query("categories")
+      .withIndex("by_user_and_name", (q) =>
+        q.eq("userId", identity.subject).eq("name", categoryName)
+      )
+      .unique();
+    if (!existing) {
+      await ctx.db.insert("categories", {
+        name: categoryName,
+        createdAt: Date.now(),
+        userId: identity.subject,
+      });
+    }
+
+    await ctx.db.patch(docId, { category: categoryName });
+  },
+});

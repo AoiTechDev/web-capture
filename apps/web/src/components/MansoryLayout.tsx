@@ -2,13 +2,14 @@
 
 import { useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
-import { Trash, Maximize2, Download } from "lucide-react";
+import { Trash, Maximize2, Download, FolderEdit } from "lucide-react";
 
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { Id } from "../../../../packages/backend/convex/_generated/dataModel";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
 import { preloadImage } from "@/utils/image-preloader";
+import ChangeCategoryDialog from "./ChangeCategoryDialog";
 interface MasonryItem {
   _id: string;
   url?: string;
@@ -67,6 +68,8 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
   const [columns, setColumns] = useState<number>(3);
   const [columnWidth, setColumnWidth] = useState<number>(COLUMN_WIDTH);
   const [containerWidth, setContainerWidth] = useState<number>(0);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const { setIsOpen, setImageUrl } = useMaximizeImageStore();
   const deleteById = useMutation(api.upload.deleteById);
 
@@ -218,6 +221,18 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   <Download className="w-7 h-7 text-white" />
                 </button>
 
+                <button
+                  className=" p-2 bg-white/30 rounded-xl cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedId(item._id);
+                    setDialogOpen(true);
+                  }}
+                  title="Change category"
+                >
+                  <FolderEdit className="w-7 h-7 text-white" />
+                </button>
+
                 <button className=" p-2 bg-white/30 rounded-xl cursor-pointer" 
                  onMouseEnter={() => {
                    if (item.url) preloadImage(item.url);
@@ -275,6 +290,11 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
           </div>
         );
       })}
+      <ChangeCategoryDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        captureId={selectedId}
+      />
     </div>
   );
 }
