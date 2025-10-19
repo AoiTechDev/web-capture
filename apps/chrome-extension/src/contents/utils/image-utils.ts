@@ -3,9 +3,10 @@ export function getImageDimensions(blob: Blob) {
     // Create an ImageBitmap for service worker context
     createImageBitmap(blob)
       .then((imageBitmap) => {
-        resolve({ width: imageBitmap.width, height: imageBitmap.height });
-        imageBitmap.close(); // Clean up the ImageBitmap
+        resolve({ width: imageBitmap.width, height: imageBitmap.height })
+        imageBitmap.close() // Clean up the ImageBitmap
       })
-      .catch(reject);
-  });
+      .catch(reject)
+  })
 }
+
