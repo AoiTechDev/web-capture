@@ -1,12 +1,11 @@
 
 import Image from "next/image";
 import { X } from "lucide-react";
-import React, { useState } from "react";
+import React from "react";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
 
 const MaximizedImage = () => {
   const { isOpen, setIsOpen, imageUrl } = useMaximizeImageStore();
-  const [imageLoaded, setImageLoaded] = useState(false);
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) {
@@ -14,9 +13,7 @@ const MaximizedImage = () => {
     }
   };
 
-  const handleImageLoad = () => {
-    setImageLoaded(true);
-  };
+  
 
   return isOpen ? (
     <div
@@ -36,7 +33,9 @@ const MaximizedImage = () => {
           width={1200}
           height={800}
           className="object-contain"
-          onLoad={handleImageLoad}
+          unoptimized
+          priority
+          sizes="(max-width: 1200px) 90vw, 1200px"
           style={{
             maxWidth: '90vw',
             maxHeight: '90vh',

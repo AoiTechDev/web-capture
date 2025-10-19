@@ -8,6 +8,7 @@ import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { Id } from "../../../../packages/backend/convex/_generated/dataModel";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
+import { preloadImage } from "@/utils/image-preloader";
 interface MasonryItem {
   _id: string;
   url?: string;
@@ -31,7 +32,7 @@ const MIN_HEIGHT = 100;
 const MAX_HEIGHT = 600;
 const FOOTER_HEIGHT = 80; // Approximate height for URL + tags footer
 
-// Responsive breakpoints
+
 const getColumnWidth = () => {
   if (typeof window === "undefined") return COLUMN_WIDTH;
 
@@ -183,16 +184,16 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
         return (
           <div
             key={item._id}
-            className="absolute"
+            className="absolute "
             style={{
               left: `${position.left}px`,
               top: `${position.top}px`,
               width: `${position.width}px`,
               height: `${position.height}px`,
             }}
-           
+            
           >
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden group duration-100 relative cursor-pointer flex flex-col h-full">
+            <div className=" rounded-2xl shadow-lg overflow-hidden group duration-100 relative cursor-pointer flex flex-col h-full">
               <div className="absolute inset-0 bg-black/70 group-hover:flex gap-4 justify-center items-center transition-all duration-100 hidden z-10">
                 <button
                   className="  cursor-pointer p-2 bg-red-500 rounded-xl"
@@ -218,16 +219,22 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                 </button>
 
                 <button className=" p-2 bg-white/30 rounded-xl cursor-pointer" 
+                 onMouseEnter={() => {
+                   if (item.url) preloadImage(item.url);
+                 }}
                  onClick={() => {
-              setIsOpen(true);
-              setImageUrl(item.url || "");
-            }}>
+                   if (item.url) preloadImage(item.url);
+                   setIsOpen(true);
+                   setImageUrl(item.url || "");
+                 }}>
                   <Maximize2 className="w-7 h-7 text-white " />
                 </button>
               </div>
               
-              {/* Image */}
-              <div className="flex-1 relative overflow-hidden">
+              <div className="flex-1 relative overflow-hidden"
+                   onMouseEnter={() => {
+                     if (item.url) preloadImage(item.url);
+                   }}>
                 {item.url && (
                   <Image
                     src={item.url}
@@ -239,20 +246,18 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                       width: "100%",
                       height: "100%",
                     }}
+                    loading="lazy"
                   />
                 )}
               </div>
               
-              {/* Footer with URL and Tags */}
               <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-4 space-y-2">
-                {/* Page URL */}
                 {item.pageUrl && (
                   <div className="text-gray-300 text-xs font-medium truncate">
                     {new URL(item.pageUrl).hostname}
                   </div>
                 )}
                 
-                {/* Tags */}
                 {item.tags && item.tags.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {item.tags.map((tag, idx) => (

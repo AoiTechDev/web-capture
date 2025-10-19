@@ -12,7 +12,6 @@ type Kind = "image" | "text" | "link" | "code" | "screenshot";
 export default function DashboardPage() {
   const { selected } = useSelectedCategoryStore();
   const [selectedKind, setSelectedKind] = useState<Kind>("image");
-  // Use stable cached query results; default to [] to make return typed and non-undefined
   const captures = useStableQuery(
     api.captures.byCategoryAndKind,
     { category: selected || "unsorted", kind: selectedKind },
@@ -35,22 +34,10 @@ export default function DashboardPage() {
   return (
     <main id="main-content" className="flex-1 flex flex-col w-full">
       <header id="dashboard-header" className="p-6 border-b border-gray-800">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-          <div className="flex items-center space-x-4">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search captures..."
-                className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 pl-10 text-white placeholder-gray-400 focus:border-cyan-400 focus:outline-none w-80"
-              />
-              <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
-            </div>
-           
-          </div>
-        </div>
-
-        <div id="tabs" className="flex space-x-2">
+        <div className="flex items-center justify-between">
+         
+         
+          <div id="tabs" className="flex space-x-2">
           {tabs.map(({ key, label, Icon }) => {
             const active = selectedKind === key;
             return (
@@ -70,6 +57,20 @@ export default function DashboardPage() {
             );
           })}
         </div>
+        <div className="flex items-center space-x-4">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search captures..."
+                className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 pl-10 text-white placeholder-gray-400 focus:border-cyan-400 focus:outline-none w-80"
+              />
+              <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
+            </div>
+           
+          </div>
+        </div>
+
+       
       </header>
 
       <div id="content-area" className="flex-1 p-6 overflow-y-auto">
