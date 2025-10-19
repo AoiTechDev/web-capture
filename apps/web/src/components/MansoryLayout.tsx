@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo, useLayoutEffect } from "react";
+import { useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
-import { Trash, Maximize2 } from "lucide-react";
+import { Trash, Maximize2, Download } from "lucide-react";
 
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
@@ -68,6 +68,30 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const { setIsOpen, setImageUrl } = useMaximizeImageStore();
   const deleteById = useMutation(api.upload.deleteById);
+
+  const handleDownload = async (url?: string, preferredName?: string) => {
+    if (!url) return;
+    try {
+      const response = await fetch(url, { mode: "cors" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const mimeSubtype = blob.type?.split("/")[1] || "png";
+      const filename = `${(preferredName || "capture").replace(/[^a-z0-9-_]+/gi, "-")}.${mimeSubtype}`;
+
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      // Fallback: open in a new tab if direct download fails (e.g., CORS)
+      window.open(url, "_blank", "noopener,noreferrer");
+      console.error("Failed to download image:", err);
+    }
+  };
 
   useLayoutEffect(() => {
     const updateLayout = () => {
@@ -181,6 +205,16 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   }}
                 >
                   <Trash className="w-7 h-7 text-white" />
+                </button>
+
+                <button
+                  className=" p-2 bg-white/30 rounded-xl cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDownload(item.url, item.alt || `capture-${item._id}`);
+                  }}
+                >
+                  <Download className="w-7 h-7 text-white" />
                 </button>
 
                 <button className=" p-2 bg-white/30 rounded-xl cursor-pointer" 
