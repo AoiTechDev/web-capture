@@ -77,3 +77,48 @@ export const listTags = query({
     return all.map((t) => ({ name: t.name, useCount: t.useCount, lastUsedAt: t.lastUsedAt }));
   },
 });
+
+export const getCaptureById = query({
+  args: { id: v.id("captures") },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const doc = await ctx.db.get(id);
+    if (!doc || (doc as any).userId !== identity.subject) return null;
+    return doc;
+  },
+});
+
+import { mutation } from "./_generated/server";
+
+export const patchImageCaptionAndEmbedding = mutation({
+  args: {
+    id: v.id("captures"),
+    caption: v.optional(v.string()),
+    imageEmbedding: v.optional(v.array(v.float64())),
+  },
+  handler: async (ctx, { id, caption, imageEmbedding }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    const doc = await ctx.db.get(id);
+    if (!doc || (doc as any).userId !== identity.subject) throw new Error("Not found or forbidden");
+    await ctx.db.patch(id, {
+      ...(caption !== undefined ? { caption } : {}),
+      ...(imageEmbedding !== undefined ? { imageEmbedding } : {}),
+    });
+    return { ok: true } as const;
+  },
+});
+
+export const listAllForUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [] as any[];
+    const all = await ctx.db
+      .query("captures")
+      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
+      .collect();
+    return all as any[];
+  },
+});

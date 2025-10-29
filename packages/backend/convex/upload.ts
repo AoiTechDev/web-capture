@@ -49,7 +49,7 @@ export const saveImageCapture = mutation({
     const identity = await ctx.auth.getUserIdentity();
     
     if (!identity) throw new Error("Unauthorized");
-    await ctx.db.insert("captures", {
+    const insertedId = await ctx.db.insert("captures", {
       kind: "image",
       storageId,
       src: src ?? "",
@@ -64,6 +64,7 @@ export const saveImageCapture = mutation({
       note,
       userId: identity.subject,
     });
+    return insertedId;
   },
 });
 

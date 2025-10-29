@@ -17,7 +17,7 @@ export const uploadCroppedImage = async ({msg, convex, sendResponse}:{
     if (!uploadRes.ok) throw new Error('Upload failed');
     const { storageId } = await uploadRes.json();
 
-    await convex.mutation(api.upload.saveImageCapture, {
+    const docId = await convex.mutation(api.upload.saveImageCapture, {
       storageId,
       src: undefined,
       alt: 'screenshot',
@@ -30,6 +30,11 @@ export const uploadCroppedImage = async ({msg, convex, sendResponse}:{
       title: typeof msg.title === 'string' ? msg.title : undefined,
       note: typeof msg.note === 'string' ? msg.note : undefined,
     });
+    try {
+      if (docId) {
+        await convex.action(api.ai.generateImageCaptionAndEmbedding, { captureId: docId as any });
+      }
+    } catch {}
     if (Array.isArray(msg.tags)) {
       try {
         await convex.mutation(api.upload.upsertTags, { names: msg.tags });

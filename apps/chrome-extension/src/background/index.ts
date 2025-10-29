@@ -125,6 +125,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendResponse,
           });
         }
+
+        if (msg.type === 'SEARCH_SEMANTIC') {
+          const q = String((msg as any).q ?? '').trim();
+          const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
+          try {
+            const { results } = await convex.action(api.search.searchCapturesSemantic, { q, limit });
+            sendResponse({ results, mode: 'semantic' });
+          } catch (e) {
+            sendResponse({ results: [], mode: 'semantic' });
+          }
+          return;
+        }
+
+        if (msg.type === 'SEARCH_CAPTURES') {
+          const q = String((msg as any).q ?? '').trim();
+          const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
+          try {
+            const { results } = await convex.query(api.search.searchCapturesFallback, { q, limit });
+            sendResponse({ results });
+          } catch (e) {
+            sendResponse({ results: [] });
+          }
+          return;
+        }
       }
 
       const tokenForCaller = await getToken();

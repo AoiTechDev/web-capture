@@ -13,6 +13,8 @@ export const captureValidator = v.union(
     timestamp: v.float64(),
     width: v.number(),
     height: v.number(),
+    caption: v.optional(v.string()),
+    imageEmbedding: v.optional(v.array(v.float64())),
     category: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     title: v.optional(v.string()),

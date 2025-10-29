@@ -27,7 +27,7 @@ export const saveImageCapture = async ({
       width: number;
       height: number;
     };
-    await convex.mutation(api.upload.saveImageCapture, {
+    const docId = await convex.mutation(api.upload.saveImageCapture, {
       storageId,
       src: msg.data.src,
       alt: msg.data.alt ?? undefined,
@@ -40,6 +40,11 @@ export const saveImageCapture = async ({
       title: typeof msg.data.title === 'string' ? msg.data.title : undefined,
       note: typeof msg.data.note === 'string' ? msg.data.note : undefined,
     });
+    try {
+      if (docId) {
+        await convex.action(api.ai.generateImageCaptionAndEmbedding, { captureId: docId as any });
+      }
+    } catch {}
     if (Array.isArray(msg.data.tags)) {
       try {
         await convex.mutation(api.upload.upsertTags, { names: msg.data.tags });
