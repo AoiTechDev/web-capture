@@ -2,17 +2,14 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { captureValidator } from "./schema";
 
-// 1) Generate a short-lived upload URL (expires in ~1 hour)
 export const generateUploadUrl = mutation(async (ctx) => {
   const identity = await ctx.auth.getUserIdentity();
 
   return await ctx.storage.generateUploadUrl();
 });
 
-// 2) Save the storageId (returned by the upload POST) into your DB
 
 export const uploadCapture = mutation({
-  // Make args an object
   args: v.object({
     capture: captureValidator,
   }),

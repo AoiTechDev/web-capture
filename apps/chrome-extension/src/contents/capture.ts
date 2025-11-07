@@ -5,6 +5,7 @@ import { checkAuth } from "./features/auth/check-auth"
 import { toggleSearchOverlay, closeSearchOverlay, isSearchOverlayOpen } from "./features/search/search-overlay"
 import { cleanup, toggleSelectionMode, startScreenshotMode, exitAllModes } from "./features/capture"
 import { cropAndUpload } from "./features/capture/crop-and-upload"
+import { captureSelectedText } from "./features/capture/selected-text-capture"
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
@@ -62,22 +63,36 @@ document.addEventListener(
       e.stopPropagation()
       
       if (activeMode === "selection-category") {
-        // Exit if same mode is active
         toggleSelectionMode()
         activeMode = null
       } else {
-        // Check auth before entering mode
         void (async () => {
           const isAuthenticated = await checkAuth()
           if (!isAuthenticated) {
             showAuthNotification()
             return
           }
-          // Enter selection mode (with category)
           toggleSelectionMode(true)
           activeMode = "selection-category"
         })()
       }
+    }
+
+    // Ctrl/Cmd + Shift + X - Capture currently selected text (Alt to choose category)
+    if (hasCtrlOrMeta && e.shiftKey && key === "X") {
+      e.preventDefault()
+      e.stopPropagation()
+      void (async () => {
+        const isAuthenticated = await checkAuth()
+        if (!isAuthenticated) {
+          showAuthNotification()
+          return
+        }
+        const ok = await captureSelectedText(e.altKey)
+        if (ok) {
+        }
+      })()
+      return
     }
 
     // Ctrl/Cmd + Shift + E - Toggle screenshot mode

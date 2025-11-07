@@ -56,9 +56,7 @@ async function openCategoryOverlayAndHandlePending() {
         alert("Extension was reloaded. Please refresh this page to use the capture features.")
         return []
       }
-      // ignore other errors
     }
-    // fallback to recents
     return await getRecentCategories()
   })()
 
@@ -101,7 +99,6 @@ async function openCategoryOverlayAndHandlePending() {
       .catch((e) => {
         const errorMessage = e instanceof Error ? e.message : String(e)
         if (errorMessage.includes("Extension context invalidated")) {
-          // Error will be shown when trying to save the capture
         }
       })
     void addRecentCategory(cat)

@@ -1,14 +1,10 @@
 "use client";
-import React from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import {
-  SignedOut,
-  SignInButton,
-  SignUpButton,
   SignedIn,
-  UserButton,
+  UserButton
 } from "@clerk/nextjs";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";

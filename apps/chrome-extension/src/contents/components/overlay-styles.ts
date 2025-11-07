@@ -3,7 +3,6 @@ export function applyOverlayStyles(el: HTMLElement) {
   el.style.top = "20px"
   el.style.right = "20px"
   el.style.zIndex = "1000000"
-  // Subtle glass card to improve readability
   el.style.background = "rgba(255, 255, 255, 0.06)"
   el.style.backdropFilter = "blur(8px)"
   el.style.color = "#ffffff"

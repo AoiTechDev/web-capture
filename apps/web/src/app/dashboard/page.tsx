@@ -2,6 +2,7 @@
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import MasonryLayout from "@/components/MansoryLayout";
 import MaximizedImage from "@/components/MaximizedImage";
+import MaximizedText from "@/components/MaximizedText";
 import TextWrapLayout from "@/components/TextWrapLayout";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import { useStableQuery } from "@/hooks/useStableQuery";
@@ -157,6 +158,7 @@ export default function DashboardPage() {
       </div>
 
       <MaximizedImage />
+      <MaximizedText />
     </main>
   );
 }

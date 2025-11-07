@@ -33,9 +33,7 @@ export default function ChangeCategoryDialog({ open, onClose, captureId }: Props
     if (!name) return;
     setSaving(true);
     try {
-      // Ensure category exists
       await createCategory({ name });
-      // Reassign
       await reassign({
         docId: captureId as unknown as Id<"captures">,
         newCategory: name,

@@ -18,7 +18,6 @@ export const byCategoryAndKind = query({
     const identity = await ctx.auth.getUserIdentity();
    
     if (!identity) throw new Error("Unauthorized");
-    // Efficiently filter by user, category and kind using the compound index
     const captures = await ctx.db
       .query("captures")
       .withIndex("by_user_category_and_kind", (q) =>
@@ -44,7 +43,6 @@ export const byCategoryAndKind = query({
       );
     }
 
-    // Non-image kinds are returned as-is
     return captures;
   },
 });

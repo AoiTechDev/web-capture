@@ -2,11 +2,9 @@ import { action, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 
-// Avoid needing Node types in this package
 declare const process: any;
 
 function cosineSimilarity(a: number[], b: number[]): number {
-  // Simple, defensive cosine similarity
   if (!a.length || !b.length || a.length !== b.length) return -1;
   let dot = 0;
   let na = 0;
@@ -92,7 +90,6 @@ export const searchCapturesSemantic = action({
     const embedData: any = await embedResp.json();
     const qVec: number[] = (embedData?.data?.[0]?.embedding ?? []).map((x: any) => Number(x));
 
-    // 2) Fetch user's captures with embeddings
     const all: any[] = await ctx.runQuery(api.captures.listAllForUser, {});
 
     const scored: Array<{ doc: any; score: number }> = all

@@ -1,4 +1,3 @@
-// macOS-style region screenshot overlay
 let regionOverlay: HTMLDivElement | null = null
 let selectionBox: HTMLDivElement | null = null
 let isDraggingRegion = false
@@ -9,14 +8,12 @@ function destroyRegionOverlay() {
   if (regionOverlay && regionOverlay.parentNode) regionOverlay.parentNode.removeChild(regionOverlay)
   regionOverlay = null
   selectionBox = null
-  // restore cursor
   document.body.style.cursor = ""
 }
 
 export function startScreenshotMode() {
-  if (regionOverlay) return // already active
+  if (regionOverlay) return 
 
-  // Build overlay
   regionOverlay = document.createElement("div")
   regionOverlay.style.position = "fixed"
   regionOverlay.style.inset = "0"
@@ -32,7 +29,6 @@ export function startScreenshotMode() {
   selectionBox.style.display = "none"
   regionOverlay.appendChild(selectionBox)
 
-  // Prevent events to page beneath
   const stop = (e: Event) => e.stopPropagation()
   ;["mousedown", "mousemove", "mouseup", "click", "dblclick", "contextmenu"].forEach((t) =>
     regionOverlay!.addEventListener(t, stop, true)
@@ -66,7 +62,6 @@ export function startScreenshotMode() {
   }
 
   const finishWithRect = async (x: number, y: number, w: number, h: number) => {
-    // Use viewport-relative coordinates without adding scroll offsets
     const rx = Math.max(0, Math.min(Math.round(x), window.innerWidth))
     const ry = Math.max(0, Math.min(Math.round(y), window.innerHeight))
     const rw = Math.max(0, Math.min(Math.round(w), window.innerWidth - rx))
@@ -79,7 +74,6 @@ export function startScreenshotMode() {
       url: window.location.href,
       dpr: window.devicePixelRatio || 1,
     }
-    // Ensure overlay removal is painted before capture: wait 2 RAFs
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
     try {
       await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect })
