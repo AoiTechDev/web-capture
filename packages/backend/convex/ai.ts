@@ -22,7 +22,10 @@ export const generateImageCaptionAndEmbedding = action({
 
     const capture = await ctx.runQuery(api.captures.getCaptureById, { id: captureId });
     if (!capture) throw new Error("Capture not found");
-    if ((capture as any).kind !== "image") throw new Error("Only image captures are supported");
+    const kind = (capture as any).kind;
+    if (kind !== "image" && kind !== "screenshot") {
+      throw new Error("Only image and screenshot captures are supported");
+    }
 
     const storageId = (capture as any).storageId;
     if (!storageId) throw new Error("Capture has no storageId");

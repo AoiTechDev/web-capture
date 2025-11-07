@@ -1,7 +1,6 @@
 import { createClerkClient } from '@clerk/chrome-extension/background';
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../../packages/backend/convex/_generated/api";
-import { getImageDimensions } from "~contents/utils/image-utils";
 import { saveNonImageCapture } from '~background/functions/save-non-image-capture';
 import { saveImageCapture } from '~background/functions/save-image-capture';
 import { screenshotElement } from '~background/functions/screenshot-element';
@@ -130,7 +129,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const q = String((msg as any).q ?? '').trim();
           const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
           try {
-            const { results } = await convex.action(api.search.searchCapturesSemantic, { q, limit });
+            const { results } = await convex.action((api as any).search.searchCapturesSemantic, { q, limit });
             sendResponse({ results, mode: 'semantic' });
           } catch (e) {
             sendResponse({ results: [], mode: 'semantic' });

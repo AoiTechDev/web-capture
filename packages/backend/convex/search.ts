@@ -44,7 +44,7 @@ export const searchCapturesFallback = query({
       return hay.includes(lc);
     });
 
-    const images = filtered.filter((d: any) => d.kind === "image" && d.storageId);
+    const images = filtered.filter((d: any) => (d.kind === "image" || d.kind === "screenshot") && d.storageId);
 
     const results = await Promise.all(
       images.slice(0, take).map(async (d: any) => ({
@@ -67,7 +67,7 @@ export const searchCapturesFallback = query({
 
 export const searchCapturesSemantic = action({
   args: { q: v.string(), limit: v.optional(v.number()), minScore: v.optional(v.number()) },
-  handler: async (ctx, { q, limit, minScore: argMinScore }) => {
+  handler: async (ctx, { q, limit, minScore: argMinScore }): Promise<{ results: any[] }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
     const take = Math.max(1, Math.min(100, limit ?? 30));
@@ -77,7 +77,7 @@ export const searchCapturesSemantic = action({
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY environment variable");
 
     // 1) Embed the query
-    const embedResp = await fetch("https://api.openai.com/v1/embeddings", {
+    const embedResp = await (globalThis as any).fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -93,20 +93,20 @@ export const searchCapturesSemantic = action({
     const qVec: number[] = (embedData?.data?.[0]?.embedding ?? []).map((x: any) => Number(x));
 
     // 2) Fetch user's captures with embeddings
-    const all = await ctx.runQuery(api.captures.listAllForUser, {});
+    const all: any[] = await ctx.runQuery(api.captures.listAllForUser, {});
 
-    const scored = all
-      .filter((d: any) => d.kind === "image" && Array.isArray(d.imageEmbedding) && d.imageEmbedding.length)
+    const scored: Array<{ doc: any; score: number }> = all
+      .filter((d: any) => (d.kind === "image" || d.kind === "screenshot") && Array.isArray(d.imageEmbedding) && d.imageEmbedding.length)
       .map((d: any) => ({
         doc: d,
         score: cosineSimilarity(d.imageEmbedding as number[], qVec),
       }))
-      .filter((x) => Number.isFinite(x.score) && x.score >= minScore)
-      .sort((a, b) => b.score - a.score)
+      .filter((x: { doc: any; score: number }) => Number.isFinite(x.score) && x.score >= minScore)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
       .slice(0, take);
 
-    const results = await Promise.all(
-      scored.map(async ({ doc }) => ({
+    const results: any[] = await Promise.all(
+      scored.map(async ({ doc }: { doc: any }) => ({
         id: doc._id,
         imageUrl: await ctx.storage.getUrl(doc.storageId),
         pageUrl: doc.url,
