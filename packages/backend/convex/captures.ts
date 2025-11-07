@@ -29,10 +29,10 @@ export const byCategoryAndKind = query({
       )
       .collect();
 
-    if (args.kind === "image") {
+    if (args.kind === "image" || args.kind === "screenshot") {
       const imagesWithStorage = captures.filter(
-        (d): d is Extract<(typeof captures)[number], { kind: "image" }> =>
-          d.kind === "image" && d.storageId !== undefined
+        (d): d is Extract<(typeof captures)[number], { kind: "image" | "screenshot" }> =>
+          (d.kind === "image" || d.kind === "screenshot") && d.storageId !== undefined
       );
 
       return Promise.all(

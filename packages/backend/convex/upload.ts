@@ -41,16 +41,17 @@ export const saveImageCapture = mutation({
     tags: v.optional(v.array(v.string())),
     title: v.optional(v.string()),
     note: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("image"), v.literal("screenshot"))),
   }),
   handler: async (
     ctx,
-    { storageId, src, alt, url, timestamp, width, height, category, tags, title, note }
+    { storageId, src, alt, url, timestamp, width, height, category, tags, title, note, kind }
   ) => {
     const identity = await ctx.auth.getUserIdentity();
     
     if (!identity) throw new Error("Unauthorized");
     const insertedId = await ctx.db.insert("captures", {
-      kind: "image",
+      kind: kind ?? "image",
       storageId,
       src: src ?? "",
       alt,
@@ -67,6 +68,9 @@ export const saveImageCapture = mutation({
     return insertedId;
   },
 });
+
+
+
 
 export const deleteById = mutation({
   args: {

@@ -22,7 +22,8 @@ export async function cropAndUpload(message: {
       dataUrl: croppedDataUrl,
       width: Math.round(rect.width),
       height: Math.round(rect.height),
-      url: rect.url
+      url: rect.url,
+      kind: 'screenshot',
     })
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e)

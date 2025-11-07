@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search, Plus, Images, Camera, Link, FileText, Code } from "lucide-react";
 import { useAction, useQuery } from "convex/react";
 
+
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
 export default function DashboardPage() {
   const { selected } = useSelectedCategoryStore();
@@ -17,6 +18,7 @@ export default function DashboardPage() {
   const [searchItems, setSearchItems] = useState<any[] | null>(null);
   const searchSemantic = useAction((api as any).search.searchCapturesSemantic);
   const fallback = useQuery(api.search.searchCapturesFallback, { q: q.trim() || "__NOOP__", limit: 60 });
+
   const captures = useStableQuery(
     api.captures.byCategoryAndKind,
     { category: selected || "unsorted", kind: selectedKind },
@@ -134,10 +136,23 @@ export default function DashboardPage() {
       </header>
 
       <div id="content-area" className="flex-1 p-6 overflow-y-auto">
-        {selectedKind === "image" && (
+        {(selectedKind === "image" || selectedKind === "screenshot") && (
           <MasonryLayout items={(q && searchItems ? searchItems : captures) as any} />
         )}
-        {selectedKind === "text" && <TextWrapLayout items={captures as any} />}
+        {selectedKind === "text" && (
+          <TextWrapLayout
+            items={
+              captures as unknown as Array<{
+                _id: string;
+                kind: "text";
+                content: string;
+                url: string;
+                timestamp: number;
+                category?: string;
+              }>
+            }
+          />
+        )}
         {/* TODO: implement other kinds rendering when data is available */}
       </div>
 

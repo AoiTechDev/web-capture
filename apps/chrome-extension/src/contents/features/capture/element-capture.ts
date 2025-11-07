@@ -92,8 +92,6 @@ async function openCategoryOverlayAndHandlePending() {
   const tags: string[] | undefined = Array.isArray(result.tags)
     ? result.tags
     : undefined
-  const title = result.title
-  const note = result.note
   if (tags && tags.length > 0) {
     await addRecentTags(tags)
   }
@@ -118,12 +116,12 @@ async function openCategoryOverlayAndHandlePending() {
       if (toSend.kind === "image") {
         await chrome.runtime.sendMessage({
           type: "SAVE_IMAGE_CAPTURE",
-          data: { ...toSend, category, tags, title, note },
+        data: { ...toSend, category, tags },
         })
       } else {
         await chrome.runtime.sendMessage({
           type: "SAVE_NON_IMAGE_CAPTURE",
-          data: { ...toSend, category, tags, title, note },
+        data: { ...toSend, category, tags },
         })
       }
     } catch (e) {

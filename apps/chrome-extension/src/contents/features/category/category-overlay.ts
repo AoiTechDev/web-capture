@@ -6,15 +6,13 @@ import {
   applyTitleStyles,
   styleButton,
   styleChip,
-} from "../../components/overlay-styles"
+} from "~contents/components/overlay-styles"
 
 export type CategoryOverlayResult =
   | {
       kind: "confirm"
       category?: string
       tags?: string[]
-      title?: string
-      note?: string
     }
   | { kind: "cancel" }
 
@@ -42,10 +40,8 @@ export function showCategoryOverlay(
         if (e.key === "Enter") {
           const value = input.value.trim()
           const tags = collectTags()
-          const titleVal = titleInput.value.trim() || undefined
-          const noteVal = noteInput.value.trim() || undefined
           cleanup()
-          resolve({ kind: "confirm", category: value || undefined, tags, title: titleVal, note: noteVal })
+          resolve({ kind: "confirm", category: value || undefined, tags })
         }
         if (e.key === "Escape") {
           cleanup()
@@ -71,19 +67,6 @@ export function showCategoryOverlay(
     applySuggestionsStyles(recentTagsRow)
     overlay.appendChild(recentTagsRow)
 
-    const titleInput = document.createElement("input")
-    titleInput.type = "text"
-    titleInput.placeholder = "Title (optional)"
-    applyInputStyles(titleInput)
-    titleInput.style.marginTop = "8px"
-    overlay.appendChild(titleInput)
-
-    const noteInput = document.createElement("input")
-    noteInput.type = "text"
-    noteInput.placeholder = "Note (optional)"
-    applyInputStyles(noteInput)
-    noteInput.style.marginTop = "8px"
-    overlay.appendChild(noteInput)
 
     const suggestions = document.createElement("div")
     applySuggestionsStyles(suggestions)
@@ -94,33 +77,29 @@ export function showCategoryOverlay(
 
     const confirmBtn = document.createElement("button")
     confirmBtn.textContent = "Confirm"
-    styleButton(confirmBtn, "#10b981")
+    styleButton(confirmBtn, "#00FF94")
     confirmBtn.addEventListener(
       "click",
       (e) => {
         e.stopPropagation()
         const value = input.value.trim()
         const tags = collectTags()
-        const titleVal = titleInput.value.trim() || undefined
-        const noteVal = noteInput.value.trim() || undefined
         cleanup()
-        resolve({ kind: "confirm", category: value || undefined, tags, title: titleVal, note: noteVal })
+        resolve({ kind: "confirm", category: value || undefined, tags })
       },
       false
     )
 
     const unsortedBtn = document.createElement("button")
     unsortedBtn.textContent = "Unsorted"
-    styleButton(unsortedBtn, "#6b7280")
+    styleButton(unsortedBtn, "#2a2b2d")
     unsortedBtn.addEventListener(
       "click",
       (e) => {
         e.stopPropagation()
         cleanup()
         const tags = collectTags()
-        const titleVal = titleInput.value.trim() || undefined
-        const noteVal = noteInput.value.trim() || undefined
-        resolve({ kind: "confirm", category: undefined, tags, title: titleVal, note: noteVal })
+        resolve({ kind: "confirm", category: undefined, tags })
       },
       false
     )
