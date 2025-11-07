@@ -1,4 +1,4 @@
-import { detectElementType } from "./detect-element-type"
+import { detectElementType } from "~contents/features/capture/detect-element-type"
 
 export function captureElement(element: HTMLElement) {
   const variant = detectElementType(element)

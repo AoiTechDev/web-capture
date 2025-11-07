@@ -29,6 +29,7 @@ export const uploadCroppedImage = async ({msg, convex, sendResponse}:{
       tags: Array.isArray(msg.tags) ? msg.tags : undefined,
       title: typeof msg.title === 'string' ? msg.title : undefined,
       note: typeof msg.note === 'string' ? msg.note : undefined,
+      kind: msg.kind ?? undefined,
     });
     try {
       if (docId) {
