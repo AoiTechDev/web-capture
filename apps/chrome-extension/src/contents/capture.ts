@@ -6,6 +6,7 @@ import { toggleSearchOverlay, closeSearchOverlay, isSearchOverlayOpen } from "./
 import { cleanup, toggleSelectionMode, startScreenshotMode, exitAllModes } from "./features/capture"
 import { cropAndUpload } from "./features/capture/crop-and-upload"
 import { captureSelectedText } from "./features/capture/selected-text-capture"
+import { captureCurrentPageLink } from "./features/capture/capture-link"
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
@@ -91,6 +92,21 @@ document.addEventListener(
         const ok = await captureSelectedText(e.altKey)
         if (ok) {
         }
+      })()
+      return
+    }
+
+    // Ctrl/Cmd + Shift + L - Capture current page link (Alt to choose category)
+    if (hasCtrlOrMeta && e.shiftKey && key === "L") {
+      e.preventDefault()
+      e.stopPropagation()
+      void (async () => {
+        const isAuthenticated = await checkAuth()
+        if (!isAuthenticated) {
+          showAuthNotification()
+          return
+        }
+        await captureCurrentPageLink(e.altKey)
       })()
       return
     }

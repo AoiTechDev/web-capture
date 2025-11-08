@@ -43,6 +43,19 @@ export const byCategoryAndKind = query({
       );
     }
 
+    if (args.kind === "link") {
+      const linksWithPreview = await Promise.all(
+        captures.map(async (d: any) => {
+          if (d.linkPreviewId) {
+            const preview = await ctx.db.get(d.linkPreviewId);
+            return { ...d, preview };
+          }
+          return d;
+        })
+      );
+      return linksWithPreview;
+    }
+
     return captures;
   },
 });

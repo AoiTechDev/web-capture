@@ -4,6 +4,7 @@ import MasonryLayout from "@/components/MansoryLayout";
 import MaximizedImage from "@/components/MaximizedImage";
 import MaximizedText from "@/components/MaximizedText";
 import TextWrapLayout from "@/components/TextWrapLayout";
+import LinkList from "@/components/LinkList";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import { useStableQuery } from "@/hooks/useStableQuery";
 import { useEffect, useMemo, useState } from "react";
@@ -154,7 +155,24 @@ export default function DashboardPage() {
             }
           />
         )}
-        {/* TODO: implement other kinds rendering when data is available */}
+        {selectedKind === "link" && (
+          <LinkList
+            items={
+              (captures as unknown as Array<{
+                _id: string;
+                kind: "link";
+                href: string;
+                text?: string;
+                url: string;
+                title?: string;
+                timestamp: number;
+                category?: string;
+                tags?: string[];
+              }>)
+            }
+          />
+        )}
+        {/* TODO: implement code rendering when data is available */}
       </div>
 
       <MaximizedImage />

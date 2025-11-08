@@ -35,7 +35,7 @@ function openSearchOverlay() {
 
     const input = document.createElement('input')
     input.type = 'text'
-    input.placeholder = 'Search your captures...'
+    input.placeholder = 'Search your captures... (Use l: for links only)'
     input.className = 'search-input'
     input.addEventListener('keydown', onSearchKeyDown, true)
     input.addEventListener('input', debounceSearch, true)
@@ -64,13 +64,39 @@ function debounceSearch() {
 }
 
 async function runSearch() {
-  const q = (searchInputEl?.value ?? '').trim()
+  const rawQuery = (searchInputEl?.value ?? '').trim()
+  if (!rawQuery) {
+    renderSearchResults([], searchResultsEl, closeSearchOverlay)
+    return
+  }
+  
+  
+  const isLinkSearch = rawQuery.toLowerCase().startsWith('l:')
+  const q = isLinkSearch ? rawQuery.slice(2).trim() : rawQuery
+  
+  console.log('[search-overlay] Raw query:', rawQuery, 'isLinkSearch:', isLinkSearch, 'query:', q)
+  
   if (!q) {
     renderSearchResults([], searchResultsEl, closeSearchOverlay)
     return
   }
+  
   try {
-    // Prefer semantic search; fallback to metadata search if model not available
+    
+    if (isLinkSearch) {
+      console.log('[search-overlay] Sending SEARCH_LINKS message with query:', q)
+      const linkResp = await new Promise<{ results: any[] }>((resolve) => {
+        chrome.runtime.sendMessage({ type: 'SEARCH_LINKS', q, limit: 30 }, (r) => {
+          console.log('[search-overlay] SEARCH_LINKS response:', r)
+          resolve(r)
+        })
+      })
+      console.log('[search-overlay] Rendering', linkResp?.results?.length || 0, 'link results')
+      renderSearchResults(Array.isArray(linkResp?.results) ? linkResp.results : [], searchResultsEl, closeSearchOverlay)
+      return
+    }
+    
+    
     const resp = await new Promise<{ results: any[]; mode?: string }>((resolve) => {
       chrome.runtime.sendMessage({ type: 'SEARCH_SEMANTIC', q, limit: 30 }, (r) => resolve(r))
     })

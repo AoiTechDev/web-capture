@@ -3,10 +3,16 @@ export function renderSearchResults(
   searchResultsEl: HTMLDivElement | null,
   closeSearchOverlay: () => void
 ) {
-  if (!searchResultsEl) return
+  console.log('[search-results] renderSearchResults called with', results.length, 'results:', results)
+  
+  if (!searchResultsEl) {
+    console.log('[search-results] No searchResultsEl!')
+    return
+  }
   searchResultsEl.innerHTML = ''
   
   if (!results.length) {
+    console.log('[search-results] No results, showing empty state')
     const empty = document.createElement('div')
     empty.className = 'search-results-empty'
     empty.textContent = 'No results'
@@ -14,18 +20,20 @@ export function renderSearchResults(
     return
   }
   
+  console.log('[search-results] Rendering', results.length, 'results')
+  
   async function copyImageToClipboard(url: string): Promise<boolean> {
     try {
       const resp = await fetch(url, { mode: 'cors', cache: 'no-cache' })
       if (!resp.ok) throw new Error('HTTP ' + resp.status)
       const blob = await resp.blob()
       const item = new ClipboardItem({ [blob.type || 'image/png']: blob })
-      // @ts-ignore - navigator.clipboard.write supports ClipboardItem in Chromium
+      
       await navigator.clipboard.write([item])
       return true
     } catch (e) {
       try {
-        // Fallback via canvas to ensure proper MIME
+        
         const img = await new Promise<HTMLImageElement>((resolve, reject) => {
           const i = new Image()
           i.crossOrigin = 'anonymous'
@@ -42,7 +50,7 @@ export function renderSearchResults(
         const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
         if (!blob) throw new Error('Canvas toBlob failed')
         const item = new ClipboardItem({ 'image/png': blob })
-        // @ts-ignore
+        
         await navigator.clipboard.write([item])
         return true
       } catch {
@@ -67,18 +75,45 @@ export function renderSearchResults(
   for (const item of results) {
     const row = document.createElement('div')
     row.className = 'search-result-item'
-    row.addEventListener('click', async (e) => {
-      e.stopPropagation()
-      if (item.imageUrl) {
-        const ok = await copyImageToClipboard(item.imageUrl)
-        showToast(ok ? 'Image copied to clipboard' : 'Copy failed')
-      }
-      closeSearchOverlay()
-    })
+    console.log('item', item)
+    
+    if (item.kind === 'link') {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation()
+        window.open(item.url || item.href, '_blank')
+        closeSearchOverlay()
+      })
+    } else {
+      row.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        if (item.imageUrl) {
+          const ok = await copyImageToClipboard(item.imageUrl)
+          showToast(ok ? 'Image copied to clipboard' : 'Copy failed')
+        }
+        closeSearchOverlay()
+      })
+    }
 
     const thumb = document.createElement('div')
     thumb.className = 'search-result-thumb'
-    if (item.imageUrl) {
+    
+    
+    if (item.kind === 'link') {
+     
+      if (item.faviconUrl) {
+        const favicon = document.createElement('img')
+        favicon.src = item.faviconUrl
+        favicon.style.width = '32px'
+        favicon.style.height = '32px'
+        favicon.style.objectFit = 'contain'
+        thumb.appendChild(favicon)
+      } else {
+        const placeholder = document.createElement('div')
+        placeholder.className = 'search-result-thumb-placeholder'
+        placeholder.textContent = '🔗'
+        thumb.appendChild(placeholder)
+      }
+    } else if (item.imageUrl) {
       const img = document.createElement('img')
       img.src = item.imageUrl
       thumb.appendChild(img)
@@ -92,16 +127,28 @@ export function renderSearchResults(
     const meta = document.createElement('div')
     meta.className = 'search-result-meta'
 
-    // Website (host) only
     const title = document.createElement('div')
     title.className = 'search-result-title'
-    const host = (() => { try { return item.pageUrl ? new URL(item.pageUrl).host : '' } catch { return '' } })()
-    title.textContent = host || 'Website'
+    
+    
+    if (item.kind === 'link') {
+      title.textContent = item.title || item.domain || 'Untitled'
+    } else {
+      const host = (() => { try { return item.pageUrl ? new URL(item.pageUrl).host : '' } catch { return '' } })()
+      title.textContent = host || 'Website'
+    }
 
-    // Category only
     const sub = document.createElement('div')
     sub.className = 'search-result-subtitle'
-    sub.textContent = item.category || ''
+    
+    
+    if (item.kind === 'link') {
+      const domain = item.domain || ''
+      const desc = item.description ? ` • ${item.description.slice(0, 60)}${item.description.length > 60 ? '...' : ''}` : ''
+      sub.textContent = domain + desc
+    } else {
+      sub.textContent = item.category || ''
+    }
 
     meta.appendChild(title)
     meta.appendChild(sub)

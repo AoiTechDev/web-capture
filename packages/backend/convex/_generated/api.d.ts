@@ -16,6 +16,8 @@ import type {
 import type * as ai from "../ai.js";
 import type * as captures from "../captures.js";
 import type * as helpers from "../helpers.js";
+import type * as link_search from "../link_search.js";
+import type * as links from "../links.js";
 import type * as search from "../search.js";
 import type * as upload from "../upload.js";
 
@@ -31,6 +33,8 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   captures: typeof captures;
   helpers: typeof helpers;
+  link_search: typeof link_search;
+  links: typeof links;
   search: typeof search;
   upload: typeof upload;
 }>;

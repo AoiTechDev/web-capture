@@ -13,9 +13,17 @@ export const saveNonImageCapture = async ({
           await convex.mutation(api.upload.upsertTags, { names: (captureData as any).tags });
         } catch {}
       }
-      await convex.mutation(api.upload.uploadCapture, {
+      const insertedId = await convex.mutation(api.upload.uploadCapture, {
         capture: captureData,
       });
+      
+      // Trigger async link enrichment for link captures
+      try {
+        if (captureData?.kind === "link" && insertedId) {
+          await convex.action((api as any).links.enrichLinkPreviewForCapture, { captureId: insertedId });
+        }
+      } catch {}
+      
       sendResponse({ statusCode: 200, message: 'Non-image capture saved' });
       return;
 }

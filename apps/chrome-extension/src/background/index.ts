@@ -148,6 +148,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
           return;
         }
+
+        if (msg.type === 'SEARCH_LINKS') {
+          const q = String((msg as any).q ?? '').trim();
+          const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
+          console.log('[SEARCH_LINKS] Query:', q, 'Limit:', limit);
+          try {
+            const { results } = await convex.query((api as any).link_search.searchLinks, { q, limit });
+            console.log('[SEARCH_LINKS] Results:', results?.length || 0, results);
+            sendResponse({ results });
+          } catch (e) {
+            console.error('[SEARCH_LINKS] Error:', e);
+            sendResponse({ results: [] });
+          }
+          return;
+        }
       }
 
       const tokenForCaller = await getToken();
