@@ -37,6 +37,13 @@ async function getToken() {
   return token ?? null
 }
 
+// ── Pre-load CLIP models in the background so first capture is fast ──
+// This is fire-and-forget; if it fails the models load lazily on first use.
+import('./functions/local-embeddings')
+  .then((m) => m.warmup())
+  .then(() => console.log('[Service Worker] ✅ CLIP models pre-loaded'))
+  .catch((e) => console.log('[Service Worker] CLIP warmup skipped:', e));
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   ;(async () => {
     try {
@@ -128,6 +135,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.type === 'SEARCH_SEMANTIC') {
           const q = String((msg as any).q ?? '').trim();
           const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
+
+          // ── Try local CLIP-based search first (no API call) ───────
+          try {
+            const { embedText } = await import('./functions/local-embeddings');
+            const vector = await embedText(q);
+            if (vector && vector.length > 0) {
+              const { results } = await convex.query(
+                (api as any).local_ai.searchByVector,
+                { vector, limit, minScore: 0.19 }
+              );
+              console.log('[Search] Local results:', results?.length, 'scores:', results?.map((r: any) => r.score?.toFixed(3)));
+              if (results && results.length > 0) {
+                sendResponse({ results, mode: 'local' });
+                return;
+              }
+            }
+          } catch (e) {
+            console.log('[Service Worker] Local search unavailable, falling back to API:', e);
+          }
+
+          // ── Fallback: original OpenAI API search (preserved) ──────
           try {
             const { results } = await convex.action((api as any).search.searchCapturesSemantic, { q, limit });
             sendResponse({ results, mode: 'semantic' });

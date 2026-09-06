@@ -46,14 +46,17 @@
       "cookies",
       "storage",
       "activeTab",
-      "tabs"
+      "tabs",
+      "offscreen"
     ],
     "host_permissions": [
       "$CLERK_FRONTEND_API/*",
       "$PLASMO_PUBLIC_CLERK_SYNC_HOST/*",
       "<all_urls>"
     ],
-    "key": "$CRX_PUBLIC_KEY"
-    
+    "key": "$CRX_PUBLIC_KEY",
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    }
   }
 }
