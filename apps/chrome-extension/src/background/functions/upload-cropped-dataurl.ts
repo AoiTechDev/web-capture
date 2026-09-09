@@ -2,6 +2,7 @@ import { api } from "../../../../../packages/backend/convex/_generated/api";
 import type { ConvexClient } from "convex/browser";
 // Static imports: see the note in save-image-capture.ts (MV3 importScripts).
 import { deriveMetadata, mergeTags } from "./derive-metadata";
+import { broadcastSessionState } from "./session-broadcast";
 import { suggestTags } from "./auto-tag";
 import { embedImageFromUrl } from "./local-embeddings";
 
@@ -38,6 +39,21 @@ export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
     // Signals that need no model: source domain and image shape.
     const derived = deriveMetadata({ url: msg.url, width: msg.width, height: msg.height });
 
+    // Join the session before the model runs, so the indicator reacts at
+    // capture time rather than after inference.
+    if (docId) {
+      try {
+        const assigned = await convex.mutation((api as any).sessions.assignCapture, {
+          captureId: docId,
+          domain: derived.domain ?? undefined,
+          tags: mergeTags(msg.tags, derived.tags),
+        });
+        if (assigned?.assigned) void broadcastSessionState(convex);
+      } catch (e) {
+        console.warn('[screenshot] Failed to assign session:', e);
+      }
+    }
+
     let autoTags: string[] = [];
     try {
       if (docId) {
@@ -69,6 +85,19 @@ export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
         await convex.mutation(api.upload.upsertTags, { names: allTags });
       } catch (e) {
         console.warn('[screenshot] Failed to apply auto metadata:', e);
+      }
+    }
+
+    // Carry the model's tags into the session; the item is already counted.
+    if (docId && autoTags.length) {
+      try {
+        const merged = await convex.mutation((api as any).sessions.mergeCaptureTags, {
+          captureId: docId,
+          tags: allTags,
+        });
+        if (merged?.merged) void broadcastSessionState(convex);
+      } catch (e) {
+        console.warn('[screenshot] Failed to merge session tags:', e);
       }
     }
 

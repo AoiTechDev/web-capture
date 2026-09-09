@@ -1,5 +1,10 @@
 import type { ConvexClient } from "convex/browser";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
+// Static imports: an MV3 worker may only importScripts() during initial
+// evaluation, so lazy imports inside a handler fail at message time.
+import { embedText } from "./local-embeddings";
+import { deriveMetadata, mergeTags } from "./derive-metadata";
+import { broadcastSessionState } from "./session-broadcast";
 
 /**
  * Returns a representative text string for a capture, used as input to
@@ -50,7 +55,6 @@ export const saveNonImageCapture = async ({
         if (insertedId) {
           const textToEmbed = getEmbeddableText(captureData);
           if (textToEmbed) {
-            const { embedText } = await import('./local-embeddings');
             const localVec = await embedText(textToEmbed);
             if (localVec && localVec.length > 0) {
               await convex.mutation((api as any).local_ai.patchLocalEmbedding, {
@@ -63,6 +67,30 @@ export const saveNonImageCapture = async ({
         }
       } catch (e) {
         console.warn('[save-non-image] Local embedding failed (non-blocking):', e);
+      }
+
+      // Same grouping as the visual paths: text, links and code saved during a
+      // browsing burst belong to that burst too.
+      if (insertedId) {
+        try {
+          const derived = deriveMetadata({ url: captureData?.url });
+          const allTags = mergeTags((captureData as any)?.tags, derived.tags);
+          if (allTags.length || derived.domain) {
+            await convex.mutation((api as any).local_ai.applyAutoMetadata, {
+              id: insertedId,
+              tags: allTags.length ? allTags : undefined,
+              domain: derived.domain ?? undefined,
+            });
+          }
+          const res = await convex.mutation((api as any).sessions.assignCapture, {
+            captureId: insertedId,
+            domain: derived.domain ?? undefined,
+            tags: allTags,
+          });
+          if (res?.assigned) void broadcastSessionState(convex);
+        } catch (e) {
+          console.warn('[save-non-image] Failed to assign session:', e);
+        }
       }
 
       sendResponse({ statusCode: 200, message: 'Non-image capture saved' });

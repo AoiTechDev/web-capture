@@ -20,6 +20,7 @@ import type * as link_search from "../link_search.js";
 import type * as links from "../links.js";
 import type * as local_ai from "../local_ai.js";
 import type * as search from "../search.js";
+import type * as sessions from "../sessions.js";
 import type * as upload from "../upload.js";
 
 /**
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   links: typeof links;
   local_ai: typeof local_ai;
   search: typeof search;
+  sessions: typeof sessions;
   upload: typeof upload;
 }>;
 export declare const api: FilterApi<

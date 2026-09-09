@@ -5,6 +5,7 @@ import { getImageDimensions } from "~contents/utils/image-utils";
 // during initial evaluation, and Parcel compiles runtime import() to exactly
 // that. A dynamic import here fails with a NetworkError at message time.
 import { deriveMetadata, mergeTags } from "./derive-metadata";
+import { broadcastSessionState } from "./session-broadcast";
 import { suggestTags } from "./auto-tag";
 import { embedImageFromUrl } from "./local-embeddings";
 
@@ -54,6 +55,22 @@ export const saveImageCapture = async ({
     // Signals that need no model: source domain and image shape.
     const derived = deriveMetadata({ url: msg.data.url, width, height });
 
+    // Join the session before the model runs. Embedding takes seconds, and the
+    // on-page indicator should move the instant something is captured, not once
+    // inference finishes.
+    if (docId) {
+      try {
+        const assigned = await convex.mutation((api as any).sessions.assignCapture, {
+          captureId: docId,
+          domain: derived.domain ?? undefined,
+          tags: mergeTags(msg.data.tags, derived.tags),
+        });
+        if (assigned?.assigned) void broadcastSessionState(convex);
+      } catch (e) {
+        console.warn('[save-image] Failed to assign session:', e);
+      }
+    }
+
     let autoTags: string[] = [];
     try {
       if (docId) {
@@ -90,6 +107,20 @@ export const saveImageCapture = async ({
         await convex.mutation(api.upload.upsertTags, { names: allTags });
       } catch (e) {
         console.warn('[save-image] Failed to apply auto metadata:', e);
+      }
+    }
+
+    // Carry the model's tags into the session now that they exist. The item was
+    // already counted above, so this only widens the session's tag aggregate.
+    if (docId && autoTags.length) {
+      try {
+        const merged = await convex.mutation((api as any).sessions.mergeCaptureTags, {
+          captureId: docId,
+          tags: allTags,
+        });
+        if (merged?.merged) void broadcastSessionState(convex);
+      } catch (e) {
+        console.warn('[save-image] Failed to merge session tags:', e);
       }
     }
 

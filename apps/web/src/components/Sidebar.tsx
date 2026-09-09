@@ -8,12 +8,14 @@ import {
 } from "@clerk/nextjs";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const Sidebar = () => {
   const categories = useQuery(api.captures.listCategories);
   const tags = useQuery(api.captures.listTags);
   const { selected, setSelected } = useSelectedCategoryStore();
   const { user } = useUser();
+  const pathname = usePathname();
   return (
     <aside className="w-60 glass-card border-r border-gray-800 flex flex-col">
       <div className="p-6 border-b border-gray-800">
@@ -58,6 +60,30 @@ const Sidebar = () => {
       </div>
 
       <div className="flex-1 p-6 overflow-y-auto">
+        <div className="mb-8">
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Browse</h3>
+          <div className="space-y-2 mb-2">
+            <Link
+              href="/dashboard"
+              className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors ${
+                pathname === "/dashboard" ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30" : "hover:bg-gray-800/50"
+              }`}
+            >
+              <span className="text-cyan-400">🖼️</span>
+              <span className="text-white">All Captures</span>
+            </Link>
+            <Link
+              href="/dashboard/sessions"
+              className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors ${
+                pathname?.startsWith("/dashboard/sessions") ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30" : "hover:bg-gray-800/50"
+              }`}
+            >
+              <span className="text-purple-400">🗂️</span>
+              <span className="text-white">Sessions</span>
+            </Link>
+          </div>
+        </div>
+
         <div className="mb-8">
           <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Categories</h3>
           <div className="space-y-2">

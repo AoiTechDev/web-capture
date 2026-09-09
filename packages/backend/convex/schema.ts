@@ -20,6 +20,7 @@ export const captureValidator = v.union(
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
   }),
   v.object({
     kind: v.literal("text"),
@@ -33,6 +34,7 @@ export const captureValidator = v.union(
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
   }),
   v.object({
     kind: v.literal("link"),
@@ -48,6 +50,7 @@ export const captureValidator = v.union(
     linkPreviewId: v.optional(v.id("link_previews")),
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
   }),
   v.object({
     kind: v.literal("code"),
@@ -61,6 +64,7 @@ export const captureValidator = v.union(
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
   }),
   v.object({
     kind: v.literal("screenshot"),
@@ -82,6 +86,7 @@ export const captureValidator = v.union(
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
   })
 );
 
@@ -122,6 +127,35 @@ export default defineSchema({
   })
     .index("by_user_and_canonicalUrl", ["userId", "canonicalUrl"])
     .index("by_user_createdAt", ["userId", "createdAt"]),
+  /**
+   * A browsing burst.
+   *
+   * Inspiration gathering is bursty: a run of captures minutes apart is almost
+   * always about one thing, and a long gap means a new intent. Grouping by that
+   * gap costs the user nothing, and it records *why* something was saved, which
+   * is the one thing an embedding of the pixels can never recover.
+   */
+  sessions: defineTable({
+    userId: v.string(),
+    /** User-chosen name. Absent until someone bothers; autoName covers it. */
+    name: v.optional(v.string()),
+    /** Derived from the session's own contents, recomputed as it grows. */
+    autoName: v.optional(v.string()),
+    startedAt: v.float64(),
+    lastCaptureAt: v.float64(),
+    /**
+     * Set when the user explicitly closes the session. An ended session is
+     * never rejoined, so the next capture starts a fresh one even if it
+     * lands inside the idle window.
+     */
+    endedAt: v.optional(v.float64()),
+    itemCount: v.float64(),
+    /** Aggregates kept on the session so listing it needs no capture reads. */
+    domains: v.optional(v.array(v.string())),
+    tags: v.optional(v.array(v.string())),
+  })
+    .index("by_user_lastCaptureAt", ["userId", "lastCaptureAt"])
+    .index("by_user_startedAt", ["userId", "startedAt"]),
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),

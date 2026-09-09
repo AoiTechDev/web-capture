@@ -9,6 +9,7 @@ import { uploadCroppedDataurl } from '~background/functions/upload-cropped-datau
 // Static: reindex is reached from a message handler, past the point where an
 // MV3 worker is still allowed to importScripts().
 import { runReindex, isReindexing } from '~background/functions/reindex';
+import { broadcastSessionState } from '~background/functions/session-broadcast';
 
 
 const publishableKey = process.env.PLASMO_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -21,7 +22,7 @@ const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 // Build marker: prints on every service worker start. If the value below
 // does not match the running console output, Chrome is serving a cached
 // worker and the extension needs a real reload.
-const BUILD_MARKER = 'z-score-search 23:36:20';
+const BUILD_MARKER = 'live-count 00:19:48';
 console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 async function getToken() {
@@ -187,6 +188,75 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           } catch (e) {
             console.error('[Search] keyword fallback threw:', e);
             sendResponse({ results: [] });
+          }
+          return;
+        }
+
+        if (msg.type === 'SESSION_STATUS') {
+          const session = await convex.query((api as any).sessions.getActiveSession, {});
+          sendResponse({ session });
+          return;
+        }
+
+        if (msg.type === 'SESSION_START') {
+          try {
+            const args: { name?: string } = {};
+            if (typeof msg.name === 'string' && msg.name.trim()) args.name = msg.name.trim();
+            const res = await convex.mutation((api as any).sessions.startSession, args);
+            console.log('[Session] started:', res);
+            void broadcastSessionState(convex);
+            sendResponse({ ok: true, sessionId: res?.sessionId ?? null });
+          } catch (e) {
+            console.error('[Session] start failed:', e);
+            sendResponse({ ok: false, error: String((e as any)?.message ?? e) });
+          }
+          return;
+        }
+
+        // Single keystroke toggles recording; the shortcut should not require
+        // the user to remember which state they are in.
+        if (msg.type === 'SESSION_TOGGLE') {
+          try {
+            const current = await convex.query((api as any).sessions.getActiveSession, {});
+            if (current) {
+              await convex.mutation((api as any).sessions.endSession, {});
+              void broadcastSessionState(convex);
+              sendResponse({ ok: true, running: false });
+            } else {
+              await convex.mutation((api as any).sessions.startSession, {});
+              void broadcastSessionState(convex);
+              sendResponse({ ok: true, running: true });
+            }
+          } catch (e) {
+            console.error('[Session] toggle failed:', e);
+            sendResponse({ ok: false, error: String((e as any)?.message ?? e) });
+          }
+          return;
+        }
+
+        if (msg.type === 'SESSION_END') {
+          try {
+            const res = await convex.mutation((api as any).sessions.endSession, {});
+            void broadcastSessionState(convex);
+            sendResponse({ ok: !!res?.ok });
+          } catch (e) {
+            console.error('[Session] end failed:', e);
+            sendResponse({ ok: false });
+          }
+          return;
+        }
+
+        if (msg.type === 'SESSION_RENAME') {
+          try {
+            await convex.mutation((api as any).sessions.renameSession, {
+              id: msg.id,
+              name: String(msg.name ?? ''),
+            });
+            void broadcastSessionState(convex);
+            sendResponse({ ok: true });
+          } catch (e) {
+            console.error('[Session] rename failed:', e);
+            sendResponse({ ok: false });
           }
           return;
         }
