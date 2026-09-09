@@ -100,7 +100,9 @@ async function runSearch() {
     const resp = await new Promise<{ results: any[]; mode?: string }>((resolve) => {
       chrome.runtime.sendMessage({ type: 'SEARCH_SEMANTIC', q, limit: 30 }, (r) => resolve(r))
     })
-    if (resp && Array.isArray(resp.results)) {
+    // The background always replies with an array, including [] on failure, so
+    // checking Array.isArray alone made the keyword fallback below unreachable.
+    if (resp && Array.isArray(resp.results) && resp.results.length > 0) {
       renderSearchResults(resp.results, searchResultsEl, closeSearchOverlay)
       return
     }

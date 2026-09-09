@@ -31,11 +31,24 @@ export const uploadCroppedImage = async ({msg, convex, sendResponse}:{
       note: typeof msg.note === 'string' ? msg.note : undefined,
       kind: msg.kind ?? undefined,
     });
+    // Local CLIP embedding, so screenshots land in the same vector index as
+    // image captures. Previously this called OpenAI and produced no
+    // localEmbedding at all, leaving screenshots invisible to local search.
     try {
       if (docId) {
-        await convex.action(api.ai.generateImageCaptionAndEmbedding, { captureId: docId as any });
+        const { embedImageFromBlob } = await import('./local-embeddings');
+        const localVec = await embedImageFromBlob(blob);
+        if (localVec && localVec.length > 0) {
+          await convex.mutation((api as any).local_ai.patchLocalEmbedding, {
+            id: docId,
+            localEmbedding: localVec,
+          });
+          console.log('[screenshot] ✅ Local CLIP embedding saved (' + localVec.length + 'd)');
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[screenshot] Local embedding failed:', e);
+    }
     if (Array.isArray(msg.tags)) {
       try {
         await convex.mutation(api.upload.upsertTags, { names: msg.tags });

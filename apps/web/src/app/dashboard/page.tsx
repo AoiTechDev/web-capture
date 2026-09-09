@@ -8,8 +8,8 @@ import LinkList from "@/components/LinkList";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import { useStableQuery } from "@/hooks/useStableQuery";
 import { useEffect, useMemo, useState } from "react";
-import { Search, Plus, Images, Camera, Link, FileText, Code } from "lucide-react";
-import { useAction, useQuery } from "convex/react";
+import { Search, Plus, Images, Camera, Link, FileText } from "lucide-react";
+import { useQuery } from "convex/react";
 
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
@@ -18,7 +18,6 @@ export default function DashboardPage() {
   const [selectedKind, setSelectedKind] = useState<Kind>("image");
   const [q, setQ] = useState("");
   const [searchItems, setSearchItems] = useState<any[] | null>(null);
-  const searchSemantic = useAction((api as any).search.searchCapturesSemantic);
   const fallback = useQuery(api.search.searchCapturesFallback, { q: q.trim() || "__NOOP__", limit: 60 });
 
   const captures = useStableQuery(
@@ -34,63 +33,36 @@ export default function DashboardPage() {
       { key: "screenshot" as const, label: "Screenshots", Icon: Camera },
       { key: "link" as const, label: "Links", Icon: Link },
       { key: "text" as const, label: "Text", Icon: FileText },
-      { key: "code" as const, label: "Code", Icon: Code },
+      // "code" is intentionally hidden from the UI. The kind still exists in the
+      // schema and in stored documents; we just don't offer it as a browse tab.
+      // { key: "code" as const, label: "Code", Icon: Code },
     ],
     []
   );
 
+  // Local-only search: `searchCapturesFallback` is a plain Convex query with no
+  // external API call. The previous OpenAI-backed `searchCapturesSemantic`
+  // action billed a request per debounced keystroke, so it is no longer used.
   useEffect(() => {
-    const handle = setTimeout(async () => {
-      const query = q.trim();
-      if (!query) {
-        setSearchItems(null);
-        return;
-      }
-      try {
-        const { results } = await searchSemantic({ q: query, limit: 60, minScore: 0.3 } as any);
-        let items = (results || []).map((r: any) => ({
-          _id: r.id,
-          url: r.imageUrl,
-          pageUrl: r.pageUrl,
-          width: r.width || 600,
-          height: r.height || 400,
-          alt: r.alt || r.title || "",
-          tags: r.tags || [],
-          storageId: r.storageId,
-        }));
-        if (!items.length && fallback && Array.isArray((fallback as any).results)) {
-          items = (fallback as any).results.map((r: any) => ({
-            _id: r.id,
-            url: r.imageUrl,
-            pageUrl: r.pageUrl,
-            width: r.width || 600,
-            height: r.height || 400,
-            alt: r.alt || r.title || "",
-            tags: r.tags || [],
-            storageId: r.storageId,
-          }));
-        }
-        setSearchItems(items);
-      } catch (e) {
-        if (fallback && Array.isArray((fallback as any).results)) {
-          const items = (fallback as any).results.map((r: any) => ({
-            _id: r.id,
-            url: r.imageUrl,
-            pageUrl: r.pageUrl,
-            width: r.width || 600,
-            height: r.height || 400,
-            alt: r.alt || r.title || "",
-            tags: r.tags || [],
-            storageId: r.storageId,
-          }));
-          setSearchItems(items);
-        } else {
-          setSearchItems([]);
-        }
-      }
-    }, 200);
-    return () => clearTimeout(handle);
-  }, [q, searchSemantic, fallback]);
+    if (!q.trim()) {
+      setSearchItems(null);
+      return;
+    }
+    if (!fallback || !Array.isArray((fallback as any).results)) return;
+
+    setSearchItems(
+      (fallback as any).results.map((r: any) => ({
+        _id: r.id,
+        url: r.imageUrl,
+        pageUrl: r.pageUrl,
+        width: r.width || 600,
+        height: r.height || 400,
+        alt: r.alt || r.title || "",
+        tags: r.tags || [],
+        storageId: r.storageId,
+      }))
+    );
+  }, [q, fallback]);
 
 
   return (

@@ -74,8 +74,10 @@ export const searchByVector = query({
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
 
-    // 1. Score every document that has a local embedding
-    const allScored = all
+    // 1. Score every document that has a local embedding. Keep the unfiltered
+    //    ranking around so the diagnostics below can show what a query actually
+    //    scored, including the matches that minScore rejected.
+    const ranked = all
       .filter(
         (d: any) =>
           Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0
@@ -84,21 +86,44 @@ export const searchByVector = query({
         doc: d,
         score: cosineSimilarity(d.localEmbedding as number[], vector),
       }))
-      .filter(
-        (x) => Number.isFinite(x.score) && x.score >= minScore
-      )
+      .filter((x) => Number.isFinite(x.score))
       .sort((a, b) => b.score - a.score);
+
+    const allScored = ranked.filter((x) => x.score >= minScore);
 
     // 2. Adaptive threshold: only keep results within 75% of the top score.
     //    This prevents low-relevance items from appearing when there are
     //    clearly better matches (e.g. top=0.32, cutoff=0.24).
+    // Only meaningful once there is a real spread to compare against; with one
+    // or two candidates the top score is trivially within ratio of itself, so
+    // the filter does nothing except hide the fact that the pool is tiny.
     const ADAPTIVE_RATIO = 0.65;
+    const ADAPTIVE_MIN_CANDIDATES = 3;
     const topScore = allScored.length > 0 ? allScored[0]!.score : 0;
-    const adaptiveMin = topScore * ADAPTIVE_RATIO;
+    const adaptiveMin =
+      allScored.length >= ADAPTIVE_MIN_CANDIDATES ? topScore * ADAPTIVE_RATIO : -1;
 
     const scored = allScored
       .filter((x) => x.score >= adaptiveMin)
       .slice(0, take);
+
+    // Pre-filter picture of the corpus: how many vectors were even eligible,
+    // and what the best raw scores were. Without this a zero-result search is
+    // indistinguishable from "threshold too high".
+    const diagnostics = {
+      totalForUser: all.length,
+      withEmbedding: all.filter(
+        (d: any) => Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0
+      ).length,
+      passedMinScore: allScored.length,
+      minScore,
+      adaptiveMin,
+      topScores: ranked.slice(0, 5).map((x) => ({
+        score: Number(x.score.toFixed(4)),
+        kind: x.doc.kind,
+        title: x.doc.title ?? x.doc.alt ?? x.doc.url ?? null,
+      })),
+    };
 
     const results = await Promise.all(
       scored.map(async ({ doc, score }: { doc: any; score: number }) => {
@@ -132,6 +157,54 @@ export const searchByVector = query({
       })
     );
 
-    return { results } as const;
+    return { results, diagnostics } as const;
+  },
+});
+
+/**
+ * Diagnostic: how much of this user's data is actually reachable by
+ * searchByVector. Anything without a localEmbedding is invisible to search,
+ * so a low `withLocalEmbedding` count relative to `total` means the corpus
+ * needs backfilling, not that the scoring is wrong.
+ */
+export const embeddingStats = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, { userId: argUserId }) => {
+    // Dashboard / CLI calls have no end-user identity, so allow an explicit
+    // userId there; in-app callers keep using their own authenticated subject.
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = argUserId ?? identity?.subject;
+    if (!userId) return { error: "Pass a userId (no authenticated identity)" } as const;
+
+    const all = await ctx.db
+      .query("captures")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const byKind: Record<string, { total: number; withLocalEmbedding: number }> = {};
+    let withLocalEmbedding = 0;
+    let withImageEmbedding = 0;
+
+    for (const d of all as any[]) {
+      const kind = String(d.kind ?? "unknown");
+      byKind[kind] ??= { total: 0, withLocalEmbedding: 0 };
+      byKind[kind].total++;
+
+      if (Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0) {
+        withLocalEmbedding++;
+        byKind[kind].withLocalEmbedding++;
+      }
+      if (Array.isArray(d.imageEmbedding) && d.imageEmbedding.length > 0) {
+        withImageEmbedding++;
+      }
+    }
+
+    return {
+      total: all.length,
+      withLocalEmbedding,
+      withImageEmbedding,
+      searchable: withLocalEmbedding,
+      byKind,
+    } as const;
   },
 });

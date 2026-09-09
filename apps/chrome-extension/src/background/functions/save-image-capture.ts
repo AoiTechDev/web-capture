@@ -43,8 +43,8 @@ export const saveImageCapture = async ({
 
     // ── Local CLIP embedding (no API call) ──────────────────────────
     // Generates a 512-dim vector from the image using Transformers.js.
-    // Falls back to the OpenAI API path below if local embedding fails.
-    let usedLocalEmbedding = false;
+    // This is the only embedding path: the OpenAI fallback was removed so
+    // that saving a capture never incurs API cost.
     try {
       if (docId) {
         const { embedImageFromUrl } = await import('./local-embeddings');
@@ -54,22 +54,13 @@ export const saveImageCapture = async ({
             id: docId,
             localEmbedding: localVec,
           });
-          usedLocalEmbedding = true;
           console.log('[save-image] ✅ Local CLIP embedding saved (' + localVec.length + 'd)');
         }
       }
     } catch (e) {
-      console.warn('[save-image] Local embedding failed, falling back to API:', e);
-    }
-
-    // ── OpenAI API embedding (original code, preserved as fallback) ─
-    // Only runs if local embedding didn't succeed.
-    if (!usedLocalEmbedding) {
-      try {
-        if (docId) {
-          await convex.action(api.ai.generateImageCaptionAndEmbedding, { captureId: docId as any });
-        }
-      } catch {}
+      // No API fallback by design; the capture is still saved, just without a
+      // vector, and can be picked up by a later re-index.
+      console.warn('[save-image] Local embedding failed:', e);
     }
 
     if (Array.isArray(msg.data.tags)) {

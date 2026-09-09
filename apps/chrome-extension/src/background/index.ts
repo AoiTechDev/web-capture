@@ -50,6 +50,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const token = await getToken();
       if (token) convex.setAuth(async () => token);
       else convex.setAuth(async () => null);
+      if (msg?.type?.startsWith?.('SEARCH')) {
+        console.log('[Search] msg=', msg.type, 'authenticated=', token !== null);
+      }
 
       if (msg && typeof msg === 'object' && 'type' in msg) {
 
@@ -141,11 +144,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const { embedText } = await import('./functions/local-embeddings');
             const vector = await embedText(q);
             if (vector && vector.length > 0) {
-              const { results } = await convex.query(
+              const { results, diagnostics } = await convex.query(
                 (api as any).local_ai.searchByVector,
-                { vector, limit, minScore: 0.19 }
+                // Deliberately permissive until the score distribution is known;
+                // see `diagnostics.topScores` in the log below to calibrate it.
+                { vector, limit, minScore: 0.15 }
               );
               console.log('[Search] Local results:', results?.length, 'scores:', results?.map((r: any) => r.score?.toFixed(3)));
+              console.log('[Search] diagnostics:', JSON.stringify(diagnostics, null, 2));
               if (results && results.length > 0) {
                 sendResponse({ results, mode: 'local' });
                 return;
@@ -155,13 +161,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             console.log('[Service Worker] Local search unavailable, falling back to API:', e);
           }
 
-          // ── Fallback: original OpenAI API search (preserved) ──────
-          try {
-            const { results } = await convex.action((api as any).search.searchCapturesSemantic, { q, limit });
-            sendResponse({ results, mode: 'semantic' });
-          } catch (e) {
-            sendResponse({ results: [], mode: 'semantic' });
-          }
+          // No OpenAI fallback: if the local vector search found nothing the
+          // caller drops through to SEARCH_CAPTURES (keyword) on its own.
+          sendResponse({ results: [], mode: 'local-empty' });
           return;
         }
 
@@ -170,8 +172,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
           try {
             const { results } = await convex.query(api.search.searchCapturesFallback, { q, limit });
+            console.log('[Search] keyword fallback for', JSON.stringify(q), '->', results?.length ?? 0, 'results');
             sendResponse({ results });
           } catch (e) {
+            console.error('[Search] keyword fallback threw:', e);
             sendResponse({ results: [] });
           }
           return;

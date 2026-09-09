@@ -34,7 +34,9 @@ export const searchCapturesFallback = query({
 
     const lc = q.toLowerCase();
     const filtered = all.filter((d: any) => {
-      const hay = [d.title, d.alt, d.category, d.url]
+      // Include the body of text/code/link captures, not just their metadata,
+      // otherwise a text capture can never be found by its own content.
+      const hay = [d.title, d.alt, d.category, d.url, d.content, d.text, d.href]
         .concat(Array.isArray(d.tags) ? d.tags : [])
         .filter(Boolean)
         .join(" \n")
@@ -42,20 +44,26 @@ export const searchCapturesFallback = query({
       return hay.includes(lc);
     });
 
-    const images = filtered.filter((d: any) => (d.kind === "image" || d.kind === "screenshot") && d.storageId);
-
     const results = await Promise.all(
-      images.slice(0, take).map(async (d: any) => ({
+      filtered.slice(0, take).map(async (d: any) => ({
         id: d._id,
-        imageUrl: await ctx.storage.getUrl(d.storageId),
-        pageUrl: d.url,
+        kind: d.kind as string,
+        imageUrl:
+          (d.kind === "image" || d.kind === "screenshot") && d.storageId
+            ? await ctx.storage.getUrl(d.storageId)
+            : null,
+        pageUrl: d.url ?? null,
         title: d.title ?? d.alt ?? null,
         alt: d.alt ?? null,
         tags: d.tags ?? [],
         category: d.category ?? null,
-        width: d.width,
-        height: d.height,
-        storageId: d.storageId,
+        width: d.width ?? null,
+        height: d.height ?? null,
+        storageId: d.storageId ?? null,
+        content: d.content ?? null,
+        href: d.href ?? null,
+        text: d.text ?? null,
+        linkPreviewId: d.linkPreviewId ?? null,
       }))
     );
 
