@@ -4,128 +4,96 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================================================
+   Design tokens
+   ----------------------------------------------------------------------------
+   Near-monochrome dark surfaces, hairline borders instead of shadows, and one
+   blue accent that only ever means "interactive or active". Depth comes from
+   stepping the background and drawing a 1px border - not from glow or blur.
+   ========================================================================== */
+
 :root {
-  --blue: #00D9FF;
-  --purple: #B026FF;
-  --green: #00FF94;
-  --card: oklch(1 0 0);
-  --border: oklch(0.922 0 0);
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+  /* Neutrals */
+  --bg: #08090a;
+  --surface: #0e0f11;
+  --surface-hover: #131417;
+  --surface-active: #17181c;
+  --border: #1f2023;
+  --border-strong: #2a2c30;
+  --text: #edeef0;
+  --text-muted: #8a8f98;
+  --text-subtle: #62666d;
 
-body {
-  color: white;
-  min-height: 100vh;
-}
+  /* Accent - interactive states only, never decoration */
+  --blue-50: #eff5ff;
+  --blue-100: #dbe8fe;
+  --blue-200: #bfd7fe;
+  --blue-300: #93befd;
+  --blue-400: #609cfa;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --blue-700: #1d4ed8;
+  --blue-800: #1e40af;
+  --blue-900: #1b3a87;
+  --blue-950: #152554;
 
-::-webkit-scrollbar {
-  display: none;
-}
+  /* Semantic. Green is reserved for the live recording state so that it never
+     competes with the blue accent for meaning. */
+  --success: #3fb950;
+  --danger: #f85149;
+  --warning: #d29922;
 
-.gradient-bg {
-  background: linear-gradient(135deg, #0A0A0F 0%, #1A0B2E 25%, #16213E 50%, #0F1B3C 75%, #0A0A0F 100%);
-}
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 12px;
 
-.glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.neon-glow {
-  box-shadow: 0 0 20px rgba(0, 217, 255, 0.3), 0 0 40px rgba(176, 38, 255, 0.2);
-}
-
-.floating-animation {
-  animation: float 6s ease-in-out infinite;
-}
-
-.floating-animation:nth-child(2) {
-  animation-delay: -2s;
-}
-
-.floating-animation:nth-child(3) {
-  animation-delay: -4s;
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0px) rotate(0deg);
-  }
-  33% {
-    transform: translateY(-20px) rotate(2deg);
-  }
-  66% {
-    transform: translateY(-10px) rotate(-1deg);
-  }
-}
-
-.gradient-text {
-  background: linear-gradient(135deg, #00D9FF 0%, #B026FF 50%, #00FF94 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.brutalist-shadow {
-  box-shadow: 8px 8px 0px rgba(0, 217, 255, 0.3), 16px 16px 0px rgba(176, 38, 255, 0.2);
-}
-
-.hover-scale {
-  transition: transform 0.3s ease;
-}
-
-.hover-scale:hover {
-  transform: scale(1.05);
-}
-
-.capture-animation {
-  animation: capture-pulse 2s ease-in-out infinite;
-}
-
-@keyframes capture-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(0, 217, 255, 0.7);
-  }
-  50% {
-    box-shadow: 0 0 0 20px rgba(0, 217, 255, 0);
-  }
+  /* shadcn-compatible aliases, retuned to the palette above */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--blue-500);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-hover);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-hover);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-hover);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border-strong);
+  --ring: var(--blue-500);
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-subtle: var(--text-subtle);
+
+  --color-accent-50: var(--blue-50);
+  --color-accent-100: var(--blue-100);
+  --color-accent-200: var(--blue-200);
+  --color-accent-300: var(--blue-300);
+  --color-accent-400: var(--blue-400);
+  --color-accent-500: var(--blue-500);
+  --color-accent-600: var(--blue-600);
+  --color-accent-700: var(--blue-700);
+  --color-accent-800: var(--blue-800);
+  --color-accent-900: var(--blue-900);
+  --color-accent-950: var(--blue-950);
+
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -144,60 +112,259 @@ body {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+/* ============================================================================
+   Base
+   ========================================================================== */
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings tighten as they grow, which keeps large type from reading loose. */
+h1, h2, h3 {
+  letter-spacing: -0.02em;
+}
+
+/* Thin, self-effacing scrollbars. The previous design hid them outright, which
+   removed the only scroll-position cue in a long masonry grid. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 999px;
+  /* Inset via a transparent border so the thumb reads as a thin rail. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3a3d42;
+  background-clip: content-box;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--blue-500) 30%, transparent);
+  color: var(--text);
+}
+
+/* ============================================================================
+   Primitives
+   ========================================================================== */
+
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.surface-card-interactive {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: background-color 140ms ease-out, border-color 140ms ease-out;
+}
+
+.surface-card-interactive:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* Ambient metadata. Auto-tagging puts 4-8 of these on almost every capture, so
+   they stay neutral - accent colour at that volume would drown the one blue
+   element each view is allowed. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.chip-count {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: var(--blue-500);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 140ms ease-out;
+}
+
+.btn-primary:hover {
+  background: var(--blue-600);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 140ms ease-out, border-color 140ms ease-out;
+}
+
+.btn-secondary:hover {
+  background: var(--surface-hover);
+}
+
+.input-field {
+  height: 32px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color 140ms ease-out;
+}
+
+.input-field::placeholder {
+  color: var(--text-subtle);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--blue-500);
+}
+
+/* Keyboard hint, e.g. the search field's Cmd-K badge. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  color: var(--text-subtle);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+/* The one live state in the product, so it gets the one permitted animation. */
+.recording-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+  animation: recording-pulse 2s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-dot { animation: none; }
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    border-color: var(--border);
   }
-  body {
-    @apply bg-background text-foreground;
+
+  /* Focus is never removed; it is the only always-visible accent. */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--blue-500) 40%, transparent);
+    outline-offset: 2px;
   }
+}
+
+/* ============================================================================
+   Legacy class compatibility
+   ----------------------------------------------------------------------------
+   The landing page still references the old neon/glass classes. These remap
+   them onto the new system so nothing renders broken, but they are a shim:
+   the landing page needs its own redesign pass, after which this block and
+   every call site should be deleted.
+   ========================================================================== */
+
+.gradient-bg {
+  background: var(--bg);
+}
+
+.glass-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  backdrop-filter: none;
+}
+
+.gradient-text {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: var(--blue-400);
+}
+
+.neon-glow,
+.brutalist-shadow {
+  box-shadow: none;
+}
+
+.floating-animation,
+.capture-animation {
+  animation: none;
+}
+
+.hover-scale {
+  transition: background-color 140ms ease-out, border-color 140ms ease-out;
+}
+
+.hover-scale:hover {
+  transform: none;
 }

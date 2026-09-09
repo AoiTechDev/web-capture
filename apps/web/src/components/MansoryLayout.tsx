@@ -170,7 +170,7 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
 
   if (items.length === 0) {
     return (
-      <div className="text-center text-gray-500 py-8">No captures yet</div>
+      <div className="py-8 text-center text-[13px] text-[var(--text-muted)]">No captures yet</div>
     );
   }
 
@@ -196,10 +196,53 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
             }}
             
           >
-            <div className=" rounded-2xl shadow-lg overflow-hidden group duration-100 relative cursor-pointer flex flex-col h-full">
-              <div className="absolute inset-0 bg-black/70 group-hover:flex gap-4 justify-center items-center transition-all duration-100 hidden z-10">
+            <div className="surface-card-interactive group relative flex h-full cursor-pointer flex-col overflow-hidden">
+              {/* Compact action bar, revealed on hover in the top-right rather
+                  than a full-cover scrim: the image stays readable while you
+                  reach for an action. */}
+              <div className="pointer-events-none absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
                 <button
-                  className="  cursor-pointer p-2 bg-red-500 rounded-xl"
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
+                  title="Maximize"
+                  onMouseEnter={() => {
+                    if (item.url) preloadImage(item.url);
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (item.url) preloadImage(item.url);
+                    setIsOpen(true);
+                    setImageUrl(item.url || "");
+                  }}
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
+                  title="Download"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDownload(item.url, item.alt || `capture-${item._id}`);
+                  }}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
+                  title="Change category"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedId(item._id);
+                    setDialogOpen(true);
+                  }}
+                >
+                  <FolderEdit className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
+                  title="Delete"
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteById({
@@ -208,48 +251,16 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                     });
                   }}
                 >
-                  <Trash className="w-7 h-7 text-white" />
-                </button>
-
-                <button
-                  className=" p-2 bg-white/30 rounded-xl cursor-pointer"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDownload(item.url, item.alt || `capture-${item._id}`);
-                  }}
-                >
-                  <Download className="w-7 h-7 text-white" />
-                </button>
-
-                <button
-                  className=" p-2 bg-white/30 rounded-xl cursor-pointer"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedId(item._id);
-                    setDialogOpen(true);
-                  }}
-                  title="Change category"
-                >
-                  <FolderEdit className="w-7 h-7 text-white" />
-                </button>
-
-                <button className=" p-2 bg-white/30 rounded-xl cursor-pointer" 
-                 onMouseEnter={() => {
-                   if (item.url) preloadImage(item.url);
-                 }}
-                 onClick={() => {
-                   if (item.url) preloadImage(item.url);
-                   setIsOpen(true);
-                   setImageUrl(item.url || "");
-                 }}>
-                  <Maximize2 className="w-7 h-7 text-white " />
+                  <Trash className="h-3.5 w-3.5" />
                 </button>
               </div>
-              
-              <div className="flex-1 relative overflow-hidden"
-                   onMouseEnter={() => {
-                     if (item.url) preloadImage(item.url);
-                   }}>
+
+              <div
+                className="relative flex-1 overflow-hidden bg-[var(--bg)]"
+                onMouseEnter={() => {
+                  if (item.url) preloadImage(item.url);
+                }}
+              >
                 {item.url && (
                   <Image
                     src={item.url}
@@ -265,24 +276,34 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   />
                 )}
               </div>
-              
-              <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-4 space-y-2">
+
+              <div className="space-y-2 border-t border-[var(--border)] px-3 py-2.5">
                 {item.pageUrl && (
-                  <div className="text-gray-300 text-xs font-medium truncate">
-                    {new URL(item.pageUrl).hostname}
+                  <div className="mono truncate text-[11px] text-[var(--text-muted)]">
+                    {(() => {
+                      try {
+                        return new URL(item.pageUrl).hostname.replace(/^www\./, "");
+                      } catch {
+                        return item.pageUrl;
+                      }
+                    })()}
                   </div>
                 )}
-                
+
                 {item.tags && item.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {item.tags.map((tag, idx) => (
-                      <span
-                        key={idx}
-                        className="px-3 py-1 bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-medium rounded-full transition-colors"
-                      >
+                  <div className="flex flex-wrap gap-1">
+                    {/* Capped at three: auto-tagging produces 4-8 per capture and
+                        an uncapped row pushes the footer taller than the image. */}
+                    {item.tags.slice(0, 3).map((tag, idx) => (
+                      <span key={idx} className="chip">
                         {tag}
                       </span>
                     ))}
+                    {item.tags.length > 3 && (
+                      <span className="chip text-[var(--text-subtle)]">
+                        +{item.tags.length - 3}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

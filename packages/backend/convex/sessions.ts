@@ -330,26 +330,36 @@ export const getSession = query({
       .filter((q) => q.eq(q.field("sessionId"), id))
       .collect();
 
+    
     const items = await Promise.all(
       captures
         .sort((a, b) => (b as any).timestamp - (a as any).timestamp)
-        .map(async (c: any) => ({
-          _id: c._id,
-          kind: c.kind as string,
-          url: c.storageId ? await ctx.storage.getUrl(c.storageId) : (c.src ?? null),
-          pageUrl: c.url ?? null,
-          // The masonry layout needs concrete numbers to compute columns; text
-          // and link captures have no intrinsic size.
-          width: c.width ?? 600,
-          height: c.height ?? 400,
-          alt: c.alt ?? c.title ?? "",
-          tags: c.tags ?? [],
-          storageId: c.storageId ?? null,
-          content: c.content ?? null,
-          href: c.href ?? null,
-          domain: c.domain ?? null,
-          timestamp: c.timestamp,
-        }))
+        .map(async (c: any) => {
+          const item = {
+            _id: c._id,
+            kind: c.kind,
+            url: c.storageId
+              ? await ctx.storage.getUrl(c.storageId)
+              : (c.src ?? null),
+            pageUrl: c.url ?? null,
+            width: c.width ?? 600,
+            height: c.height ?? 400,
+            alt: c.alt ?? c.title ?? "",
+            tags: c.tags ?? [],
+            storageId: c.storageId ?? null,
+            content: c.content ?? null,
+            href: c.href ?? null,
+            domain: c.domain ?? null,
+            timestamp: c.timestamp,
+          };
+    
+          if (c.kind === "link" && c.linkPreviewId) {
+            const preview = await ctx.db.get(c.linkPreviewId);
+            return { ...item, preview };
+          }
+    
+          return item;
+        })
     );
 
     return {

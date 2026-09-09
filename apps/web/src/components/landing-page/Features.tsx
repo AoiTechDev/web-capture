@@ -18,7 +18,7 @@ export default function Features() {
           />
         </svg>
       ),
-      gradient: "from-cyan-400 to-blue-600",
+      gradient: "bg-[var(--blue-500)]",
       title: "Instant Capture",
       description:
         "One keyboard shortcut captures anything - screenshots, text selections, images, or entire pages. No clicks, no menus, just pure speed.",
@@ -39,7 +39,7 @@ export default function Features() {
           />
         </svg>
       ),
-      gradient: "from-purple-500 to-pink-600",
+      gradient: "bg-[var(--surface-hover)]",
       title: "Visual Organization",
       description:
         "Beautiful masonry grid layout automatically organizes your captures. Smart categorization with tags keeps everything findable.",
@@ -71,12 +71,12 @@ export default function Features() {
     <section id="features" className="py-20 relative">
       <div className="max-w-7xl mx-auto px-6">
         <div className="text-center mb-16">
-          <h2 className="text-4xl sm:text-5xl font-black mb-4">
+          <h2 className="text-4xl sm:text-5xl font-semibold mb-4">
             <span className="gradient-text">Powerful Features</span>
             <br />
             Built for Speed
           </h2>
-          <p className="text-base sm:text-xl text-gray-300 max-w-2xl mx-auto">
+          <p className="text-base sm:text-xl text-[var(--text-muted)] max-w-2xl mx-auto">
             Every feature designed for developers, researchers, and creators who
             demand precision and speed.
           </p>
@@ -89,14 +89,14 @@ export default function Features() {
               className="glass-card p-8 rounded-2xl brutalist-shadow hover-scale group"
             >
               <div
-                className={`w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl flex items-center justify-center mb-6 neon-glow`}
+                className={`w-16 h-16 ${feature.gradient} rounded-2xl flex items-center justify-center mb-6 neon-glow`}
               >
                 {feature.icon}
               </div>
-              <h3 className="text-2xl font-bold mb-4 text-white">
+              <h3 className="text-2xl font-semibold mb-4 text-white">
                 {feature.title}
               </h3>
-              <p className="text-gray-300 leading-relaxed">
+              <p className="text-[var(--text-muted)] leading-relaxed">
                 {feature.description}
               </p>
             </div>

@@ -9,13 +9,13 @@ export default function Hero() {
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-8">
             <div className="space-y-4">
-              <h1 className="text-4xl lg:text-7xl font-black leading-tight">
+              <h1 className="text-4xl lg:text-7xl font-semibold leading-tight">
                 Your Internet
                 <span className="gradient-text block">Memory,</span>
                 <span className="text-white">Instantly </span>
                 <span className="gradient-text">Organized</span>
               </h1>
-              <p className="text-base sm:text-xl text-gray-300 max-w-lg">
+              <p className="text-base sm:text-xl text-[var(--text-muted)] max-w-lg">
                 Capture anything from the web with a single keyboard shortcut.
                 Screenshots, text, images, links - all beautifully organized in
                 your personal visual database.
@@ -23,7 +23,7 @@ export default function Hero() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4">
-              <button className="bg-gradient-to-r from-cyan-500 to-purple-600 px-8 py-4 rounded-xl font-bold text-lg neon-glow hover-scale">
+              <button className="bg-[var(--blue-500)] px-8 py-4 rounded-xl font-semibold text-lg neon-glow hover-scale">
                 <svg
                   className="inline-block w-5 h-5 mr-2"
                   fill="currentColor"
@@ -33,7 +33,7 @@ export default function Hero() {
                 </svg>
                 Add to Chrome - Free
               </button>
-              <button className="glass-card px-8 py-4 rounded-xl font-semibold text-lg hover-scale border-2 border-cyan-400">
+              <button className="glass-card px-8 py-4 rounded-xl font-semibold text-lg hover-scale border-2 border-[var(--border-strong)]">
                 <svg
                   className="inline-block w-5 h-5 mr-2"
                   fill="currentColor"
@@ -46,12 +46,12 @@ export default function Hero() {
             </div>
 
             <div className="flex items-center space-x-4 font-mono text-sm">
-              <div className="capture-animation bg-gray-800 px-3 py-2 rounded-lg border border-cyan-400">
-                <span className="text-cyan-400">Ctrl</span> +{" "}
-                <span className="text-purple-400">Shift</span> +{" "}
-                <span className="text-green-400">S</span>
+              <div className="capture-animation bg-[var(--surface-hover)] px-3 py-2 rounded-lg border border-[var(--border-strong)]">
+                <span className="text-[var(--blue-400)]">Ctrl</span> +{" "}
+                <span className="text-[var(--text-muted)]">Shift</span> +{" "}
+                <span className="text-[var(--success)]">S</span>
               </div>
-              <span className="text-gray-400">Instant capture shortcut</span>
+              <span className="text-[var(--text-muted)]">Instant capture shortcut</span>
             </div>
           </div>
 
@@ -84,7 +84,7 @@ export default function Hero() {
                   height={128}
                 />
               </div>
-              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-gradient-to-br from-cyan-400 to-purple-600 rounded-full flex items-center justify-center neon-glow">
+              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-[var(--blue-500)] rounded-full flex items-center justify-center neon-glow">
                 <svg
                   className="w-8 h-8 text-white"
                   fill="currentColor"

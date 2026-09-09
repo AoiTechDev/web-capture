@@ -1,3 +1,4 @@
+'use client'
 import { X } from "lucide-react";
 import React from "react";
 import { useMaximizeTextStore } from "@/store/maximize-text-store";
@@ -26,7 +27,7 @@ const MaximizedText = () => {
         <X className="w-7 h-7 text-white" />
       </button>
       <div className="relative max-w-[90vw] max-h-[90vh] w-full md:w-[80vw]">
-        <div className="bg-slate-900 rounded-2xl p-6 overflow-auto max-h-[90vh] text-gray-100 whitespace-pre-wrap break-words">
+        <div className="bg-[var(--surface)] rounded-2xl p-6 overflow-auto max-h-[90vh] text-[var(--text)] whitespace-pre-wrap break-words">
           {text}
         </div>
       </div>

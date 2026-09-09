@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { mutation } from "./_generated/server";
 
 
 
@@ -100,7 +101,6 @@ export const getCaptureById = query({
   },
 });
 
-import { mutation } from "./_generated/server";
 
 export const patchImageCaptionAndEmbedding = mutation({
   args: {
@@ -131,5 +131,32 @@ export const listAllForUser = query({
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
     return all as any[];
+  },
+});
+
+/**
+ * Per-kind capture counts for the dashboard tabs.
+ *
+ * The tabs show a total for every kind, not just the selected one, so this
+ * cannot come from the already-filtered `byCategoryAndKind` query.
+ */
+export const countsByKind = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return {} as Record<string, number>;
+
+    const all = await ctx.db
+      .query("captures")
+      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
+      .collect();
+
+    const counts: Record<string, number> = {};
+    for (const doc of all as any[]) {
+      const kind = String(doc.kind ?? "unknown");
+      counts[kind] = (counts[kind] ?? 0) + 1;
+    }
+    counts.all = all.length;
+    return counts;
   },
 });

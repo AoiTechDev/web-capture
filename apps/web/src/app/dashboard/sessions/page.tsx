@@ -3,7 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
+import { useCachedQuery } from "@/hooks/useStableQuery";
+import { SessionCardSkeleton } from "@/components/Skeletons";
 import { Pencil, Check, X } from "lucide-react";
 import { api } from "../../../../../../packages/backend/convex/_generated/api";
 import { Id } from "../../../../../../packages/backend/convex/_generated/dataModel";
@@ -76,12 +78,12 @@ const SessionTitle = ({ session }: { session: SessionCard }) => {
             if (e.key === "Escape") setEditing(false);
           }}
           placeholder={session.autoName ?? "Name this session"}
-          className="flex-1 min-w-0 bg-transparent border-b border-cyan-400/50 text-white text-sm outline-none pb-0.5"
+          className="min-w-0 flex-1 border-b border-[var(--blue-500)] bg-transparent pb-0.5 text-[14px] text-[var(--text)] outline-none"
         />
-        <button onClick={() => void commit()} className="p-1 text-cyan-400 hover:text-cyan-300">
+        <button onClick={() => void commit()} className="p-1 text-[var(--blue-400)] transition-colors hover:text-[var(--blue-300)]">
           <Check size={14} />
         </button>
-        <button onClick={() => setEditing(false)} className="p-1 text-gray-500 hover:text-gray-300">
+        <button onClick={() => setEditing(false)} className="p-1 text-[var(--text-subtle)] transition-colors hover:text-[var(--text)]">
           <X size={14} />
         </button>
       </div>
@@ -90,7 +92,7 @@ const SessionTitle = ({ session }: { session: SessionCard }) => {
 
   return (
     <div className="flex items-center gap-2 group/title">
-      <h3 className="font-medium text-white truncate">{session.displayName}</h3>
+      <h3 className="truncate text-[14px] font-medium text-[var(--text)]">{session.displayName}</h3>
       <button
         onClick={(e) => {
           e.preventDefault();
@@ -99,7 +101,7 @@ const SessionTitle = ({ session }: { session: SessionCard }) => {
           setDraft(session.name ?? "");
           setEditing(true);
         }}
-        className="opacity-0 group-hover/title:opacity-100 transition-opacity text-gray-500 hover:text-white shrink-0"
+        className="shrink-0 text-[var(--text-subtle)] opacity-0 transition-opacity hover:text-[var(--text)] group-hover/title:opacity-100"
         title="Rename session"
       >
         <Pencil size={12} />
@@ -109,42 +111,48 @@ const SessionTitle = ({ session }: { session: SessionCard }) => {
 };
 
 export default function SessionsPage() {
-  const data = useQuery(api.sessions.listSessions, { limit: 50, thumbsPerSession: 5 });
+  // `listSessions` returns `as const`, so its inferred type is readonly; the
+  // rows are re-typed as SessionCard below.
+  const { data, isLoading } = useCachedQuery<any>(api.sessions.listSessions, {
+    limit: 50,
+    thumbsPerSession: 5,
+  });
   const sessions = (data?.sessions ?? []) as SessionCard[];
 
   return (
     <main className="flex-1 flex flex-col w-full overflow-y-auto">
-      <header className="p-6 border-b border-gray-800">
-        <h1 className="text-xl font-semibold">Sessions</h1>
-        <p className="text-sm text-gray-400 mt-1">
+      <header className="border-b border-[var(--border)] px-6 py-5">
+        <h1 className="text-[20px] font-semibold text-[var(--text)]">Sessions</h1>
+        <p className="mt-1 text-[13px] text-[var(--text-muted)]">
           Start a session from the extension to group what you capture. Anything
           saved outside one lands in All Captures.
         </p>
       </header>
 
       <div className="p-6">
-        {data === undefined && <p className="text-gray-500 text-sm">Loading…</p>}
+        {isLoading && <SessionCardSkeleton />}
 
-        {data !== undefined && sessions.length === 0 && (
+        {!isLoading && sessions.length === 0 && (
           <div className="text-center py-20">
-            <p className="text-gray-300 mb-2">No sessions yet</p>
-            <p className="text-sm text-gray-500 max-w-md mx-auto">
+            <p className="mb-2 text-[15px] font-medium text-[var(--text)]">No sessions yet</p>
+            <p className="mx-auto max-w-md text-[13px] leading-relaxed text-[var(--text-muted)]">
               Open the extension popup and hit <strong>Start a session</strong>.
               Everything you capture until you finish it is grouped here.
             </p>
           </div>
         )}
 
+        {!isLoading && (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {sessions.map((session) => (
             <div
               key={session.id}
-              className="group glass-card border border-gray-800 rounded-xl overflow-hidden hover:border-cyan-400/40 transition-colors"
+              className="surface-card-interactive group overflow-hidden"
             >
               <Link href={`/dashboard/sessions/${session.id}`} className="block">
-                <div className="flex gap-0.5 h-28 bg-gray-900">
+                <div className="flex h-28 gap-px bg-[var(--bg)]">
                   {session.thumbnails.length === 0 ? (
-                    <div className="flex-1 flex items-center justify-center text-gray-600 text-xs">
+                    <div className="flex flex-1 items-center justify-center text-[12px] text-[var(--text-subtle)]">
                       No previews
                     </div>
                   ) : (
@@ -169,7 +177,7 @@ export default function SessionsPage() {
                   {session.running && (
                     <span
                       title="Recording"
-                      className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 animate-pulse"
+                      className="recording-dot"
                     />
                   )}
                   <div className="min-w-0 flex-1">
@@ -177,14 +185,14 @@ export default function SessionsPage() {
                   </div>
                 </div>
 
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="mt-1.5 text-[12px] text-[var(--text-muted)]">
                   {formatDay(session.startedAt)} · {session.itemCount} item
                   {session.itemCount === 1 ? "" : "s"} ·{" "}
                   {formatDuration(session.startedAt, session.lastCaptureAt)}
                 </p>
 
                 {session.domains.length > 0 && (
-                  <p className="text-xs text-gray-600 mt-1 truncate">
+                  <p className="mono mt-1 truncate text-[11px] text-[var(--text-subtle)]">
                     {session.domains.slice(0, 3).join(", ")}
                   </p>
                 )}
@@ -194,7 +202,7 @@ export default function SessionsPage() {
                     {session.tags.slice(0, 5).map((tag) => (
                       <span
                         key={tag}
-                        className="text-[10px] bg-gray-800 text-gray-300 rounded-full px-2 py-0.5"
+                        className="chip"
                       >
                         {tag}
                       </span>
@@ -205,7 +213,7 @@ export default function SessionsPage() {
             </div>
           ))}
         </div>
-
+        )}
       </div>
     </main>
   );

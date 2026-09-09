@@ -4,11 +4,11 @@ import Link from "next/link";
 
 export default function Footer() {
   return (
-    <footer className="border-t border-gray-800 py-12">
+    <footer className="border-t border-[var(--border)] py-12">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex items-center justify-between">
           <Link href="/" className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-[var(--blue-500)] flex items-center justify-center">
               <svg
                 className="w-5 h-5 text-white"
                 fill="none"
@@ -29,9 +29,9 @@ export default function Footer() {
                 />
               </svg>
             </div>
-            <span className="text-lg font-bold gradient-text">Web Capture</span>
+            <span className="text-lg font-semibold gradient-text">Web Capture</span>
           </Link>
-          <div className="text-gray-400 text-sm">
+          <div className="text-[var(--text-muted)] text-sm">
             © 2024 Web Capture. Made for power users.
           </div>
         </div>

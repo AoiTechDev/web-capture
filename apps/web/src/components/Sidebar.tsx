@@ -2,138 +2,188 @@
 import { useQuery } from "convex/react";
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useSelectedCategoryStore } from "@/store/selected-category-store";
-import {
-  SignedIn,
-  UserButton
-} from "@clerk/nextjs";
-import { useUser } from "@clerk/nextjs";
+import { SignedIn, UserButton, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
+/** Initials fallback for the avatar slot while Clerk's image loads. */
+function initials(name?: string | null, email?: string | null): string {
+  const source = name?.trim() || email?.split("@")[0] || "";
+  const parts = source.split(/[\s._-]+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+const NavRow = ({
+  href,
+  active,
+  icon,
+  label,
+  trailing,
+}: {
+  href: string;
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  trailing?: React.ReactNode;
+}) => (
+  <Link
+    href={href}
+    className={`relative flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors ${
+      active
+        ? "bg-[var(--surface-hover)] text-[var(--text)]"
+        : "text-[var(--text-muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"
+    }`}
+  >
+    {/* Active rows get a 2px accent rule rather than a filled or gradient pill. */}
+    {active && (
+      <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r bg-[var(--blue-500)]" />
+    )}
+    <span className="flex w-4 justify-center text-[var(--text-subtle)]">{icon}</span>
+    <span className="flex-1 truncate">{label}</span>
+    {trailing}
+  </Link>
+);
+
+const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+  <h3 className="mb-2 px-2.5 text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--text-subtle)]">
+    {children}
+  </h3>
+);
 
 const Sidebar = () => {
   const categories = useQuery(api.captures.listCategories);
   const tags = useQuery(api.captures.listTags);
+  const sessions = useQuery(api.sessions.listSessions, { limit: 100, thumbsPerSession: 0 });
   const { selected, setSelected } = useSelectedCategoryStore();
   const { user } = useUser();
   const pathname = usePathname();
+
+  const sessionList = sessions?.sessions ?? [];
+  const isRecording = sessionList.some((s: { running: boolean }) => s.running);
+
   return (
-    <aside className="w-60 glass-card border-r border-gray-800 flex flex-col">
-      <div className="p-6 border-b border-gray-800">
-      <Link href="/" className="flex items-center space-x-3 mb-6">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center">
-            <svg
-              className="w-6 h-6 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-          </div>
-          <span className="text-xl font-bold gradient-text">Web Capture</span>
+    <aside className="flex w-[240px] flex-col border-r border-[var(--border)] bg-[var(--surface)]">
+      {/* Brand */}
+      <div className="flex h-14 items-center border-b border-[var(--border)] px-4">
+        <Link href="/" className="flex items-center gap-2.5">
+          <span className="flex h-5 w-5 items-center justify-center rounded-[5px] bg-[var(--blue-500)]">
+            <span className="h-1.5 w-1.5 rounded-[1px] bg-white" />
+          </span>
+          <span className="text-[13px] font-semibold text-[var(--text)]">Web Capture</span>
         </Link>
-    
-
-     <SignedIn>
-              <div>
-               <div className="flex items-center gap-2">
-              <UserButton />
-                
-                 <div className="font-semibold text-white">{user?.fullName || user?.username || "Account"}</div>
-                </div>
-                <div className="text-sm text-gray-400">{user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress}</div>
-              </div>
-          </SignedIn>
-
-
       </div>
 
-      <div className="flex-1 p-6 overflow-y-auto">
-        <div className="mb-8">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Browse</h3>
-          <div className="space-y-2 mb-2">
-            <Link
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <div className="mb-6">
+          <SectionLabel>Browse</SectionLabel>
+          <div className="space-y-0.5">
+            <NavRow
               href="/dashboard"
-              className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors ${
-                pathname === "/dashboard" ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30" : "hover:bg-gray-800/50"
-              }`}
-            >
-              <span className="text-cyan-400">🖼️</span>
-              <span className="text-white">All Captures</span>
-            </Link>
-            <Link
+              active={pathname === "/dashboard"}
+              label="All Captures"
+              icon={
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="2" y="2" width="12" height="12" rx="2" />
+                </svg>
+              }
+            />
+            <NavRow
               href="/dashboard/sessions"
-              className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors ${
-                pathname?.startsWith("/dashboard/sessions") ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30" : "hover:bg-gray-800/50"
-              }`}
-            >
-              <span className="text-purple-400">🗂️</span>
-              <span className="text-white">Sessions</span>
-            </Link>
+              active={pathname?.startsWith("/dashboard/sessions") ?? false}
+              label="Sessions"
+              icon={
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="8" cy="8" r="6" />
+                </svg>
+              }
+              trailing={
+                <span className="flex items-center gap-1.5">
+                  {isRecording && <span className="recording-dot" />}
+                  <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">
+                    {sessionList.length || ""}
+                  </span>
+                </span>
+              }
+            />
           </div>
         </div>
 
-        <div className="mb-8">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Categories</h3>
-          <div className="space-y-2">
+        {tags && tags.length > 0 && (
+          <div className="mb-6">
+            <SectionLabel>Tags</SectionLabel>
+            <div className="flex flex-wrap gap-1.5 px-2.5">
+              {tags.map((t: { name: string; useCount?: number }) => (
+                <button key={t.name} className="chip transition-colors hover:text-[var(--text)]">
+                  {t.name}
+                  {typeof t.useCount === "number" && (
+                    <span className="chip-count">{t.useCount}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Categories predate Sessions and are kept only for existing data, so
+            they sit below the fold under a label that says as much. */}
+        {categories && categories.length > 0 && (
+          <div>
+            <SectionLabel>Legacy</SectionLabel>
             <button
-              className={`w-full flex items-center justify-between p-3 rounded-lg transition-colors cursor-pointer ${
-                selected === "unsorted"
-                  ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30"
-                  : "hover:bg-gray-800/50"
-              }`}
               onClick={() => setSelected("unsorted")}
+              className={`flex h-8 w-full items-center justify-between rounded-md px-2.5 text-[13px] transition-colors ${
+                selected === "unsorted"
+                  ? "text-[var(--text)]"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
             >
-              <div className="flex items-center space-x-3">
-                <span className="text-cyan-400">📥</span>
-                <span className="text-white">All Captures</span>
-              </div>
-            </button>
-
-            {categories?.map((c: { _id: string; name: string }) => (
-              <button
-                key={c._id}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer ${
-                  selected === c.name
-                    ? "bg-gradient-to-r from-cyan-500/20 to-purple-600/20 border border-cyan-400/30"
-                    : "hover:bg-gray-800/50"
-                }`}
-                onClick={() => setSelected(c.name)}
-              >
-                <div className="flex items-center space-x-3">
-                  <span className="text-purple-400">📂</span>
-                  <span className={selected === c.name ? "text-white" : "text-gray-300"}>{c.name}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Tags</h3>
-          <div className="flex flex-wrap gap-2">
-            {tags?.map((t: { name: string }) => (
-              <span
-                key={t.name}
-                className="px-3 py-1 bg-gray-800 text-gray-300 rounded-full text-sm cursor-pointer hover:bg-gray-700 transition-colors"
-              >
-                {t.name}
+              <span>Categories</span>
+              <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">
+                {categories.length}
               </span>
-            ))}
+            </button>
+            <div className="mt-0.5 space-y-0.5">
+              {categories
+                .filter((c: { name: string }) => c.name !== "unsorted")
+                .map((c: { _id: string; name: string }) => (
+                  <button
+                    key={c._id}
+                    onClick={() => setSelected(c.name)}
+                    className={`flex h-7 w-full items-center rounded-md pl-5 pr-2.5 text-[12px] transition-colors ${
+                      selected === c.name
+                        ? "bg-[var(--surface-hover)] text-[var(--text)]"
+                        : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                    }`}
+                  >
+                    <span className="truncate">{c.name}</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <SignedIn>
+        <div className="flex items-center gap-2.5 border-t border-[var(--border)] px-4 py-3">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--surface-hover)] text-[10px] font-medium text-[var(--text-muted)]">
+            {user?.imageUrl ? (
+              <UserButton />
+            ) : (
+              initials(user?.fullName, user?.primaryEmailAddress?.emailAddress)
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-medium text-[var(--text)]">
+              {user?.fullName || user?.username || "Account"}
+            </div>
+            <div className="mono truncate text-[11px] text-[var(--text-subtle)]">
+              {user?.primaryEmailAddress?.emailAddress ??
+                user?.emailAddresses?.[0]?.emailAddress}
+            </div>
           </div>
         </div>
-      </div>
+      </SignedIn>
     </aside>
   );
 };

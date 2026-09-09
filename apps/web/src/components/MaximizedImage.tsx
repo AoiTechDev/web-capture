@@ -1,51 +1,65 @@
+"use client";
 
 import Image from "next/image";
 import { X } from "lucide-react";
-import React from "react";
+import React, { useEffect } from "react";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
 
 const MaximizedImage = () => {
   const { isOpen, setIsOpen, imageUrl } = useMaximizeImageStore();
 
+  // Escape closes. An overlay that traps you until you find the X is the most
+  // common complaint about lightboxes.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, setIsOpen]);
+
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
-      setIsOpen(false);
-    }
+    if (e.target === e.currentTarget) setIsOpen(false);
   };
 
-  
+  if (!isOpen) return null;
 
-  return isOpen ? (
+  return (
     <div
-      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center mx-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(8,9,10,0.85)] backdrop-blur-sm"
       onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
     >
       <button
-        className="absolute top-5 right-5 z-60"
+        className="absolute right-5 top-5 flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
         onClick={() => setIsOpen(false)}
+        aria-label="Close"
       >
-        <X className="w-7 h-7 text-white" />
+        <X className="h-4 w-4" />
       </button>
-      <div className="relative max-w-[90vw] max-h-[90vh]">
+
+      <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
         <Image
           src={imageUrl || ""}
-          alt="maximized image"
-          width={1200}
-          height={800}
+          alt="Capture"
+          width={1600}
+          height={1000}
           className="object-contain"
           unoptimized
           priority
-          sizes="(max-width: 1200px) 90vw, 1200px"
+          sizes="90vw"
           style={{
-            maxWidth: '90vw',
-            maxHeight: '90vh',
-            width: 'auto',
-            height: 'auto'
+            maxWidth: "90vw",
+            maxHeight: "80vh",
+            width: "auto",
+            height: "auto",
           }}
         />
       </div>
     </div>
-  ) : null;
+  );
 };
 
 export default MaximizedImage;

@@ -4,17 +4,17 @@ export default function HowItWorks() {
   const steps = [
     {
       number: "1",
-      gradient: "from-cyan-400 to-blue-600",
+      gradient: "bg-[var(--blue-500)]",
       title: "Browse & Spot",
       description:
         "Navigate any website and find content worth saving. Could be inspiration, research, or just something cool.",
     },
     {
       number: "2",
-      gradient: "from-purple-500 to-pink-600",
+      gradient: "bg-[var(--surface-hover)]",
       title: (
         <>
-          Capture <span className="font-mono text-cyan-400">(Ctrl+Shift+S)</span>
+          Capture <span className="font-mono text-[var(--blue-400)]">(Ctrl+Shift+S)</span>
         </>
       ),
       description:
@@ -33,10 +33,10 @@ export default function HowItWorks() {
     <section id="how-it-works" className="py-20 relative">
       <div className="max-w-7xl mx-auto px-6">
         <div className="text-center mb-16">
-          <h2 className="text-4xl sm:text-5xl font-black mb-4">
+          <h2 className="text-4xl sm:text-5xl font-semibold mb-4">
             How It <span className="gradient-text">Works</span>
           </h2>
-          <p className="text-base sm:text-xl text-gray-300">
+          <p className="text-base sm:text-xl text-[var(--text-muted)]">
             Three simple steps to organize your internet
           </p>
         </div>
@@ -46,17 +46,17 @@ export default function HowItWorks() {
             <div key={index} className="text-center">
               <div className="relative mb-8">
                 <div
-                  className={`w-20 h-20 bg-gradient-to-br ${step.gradient} rounded-2xl flex items-center justify-center mx-auto brutalist-shadow neon-glow`}
+                  className={`w-20 h-20 ${step.gradient} rounded-2xl flex items-center justify-center mx-auto brutalist-shadow neon-glow`}
                 >
-                  <span className="text-3xl font-black text-white">
+                  <span className="text-3xl font-semibold text-white">
                     {step.number}
                   </span>
                 </div>
               </div>
-              <h3 className="text-2xl font-bold mb-4 text-white">
+              <h3 className="text-2xl font-semibold mb-4 text-white">
                 {step.title}
               </h3>
-              <p className="text-gray-300 leading-relaxed">
+              <p className="text-[var(--text-muted)] leading-relaxed">
                 {step.description}
               </p>
             </div>

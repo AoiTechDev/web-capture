@@ -53,7 +53,6 @@ interface LinkListProps {
 
 export default function LinkList({ items }: LinkListProps) {
   const safeItems = useMemo(() => items ?? [], [items])
-  
   const formatHostname = (href?: string) => {
     try {
       if (!href) return ""
@@ -77,7 +76,7 @@ export default function LinkList({ items }: LinkListProps) {
   }
 
   if (safeItems.length === 0) {
-    return <div className="text-center text-gray-500 py-8">No link captures</div>
+    return <div className="text-center text-[var(--text-subtle)] py-8">No link captures</div>
   }
 
   return (
@@ -90,10 +89,10 @@ export default function LinkList({ items }: LinkListProps) {
                 href={item.href}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-xl shadow-md overflow-hidden group duration-100 bg-slate-900/60 border border-gray-800 hover:border-cyan-700/50 hover:shadow-cyan-700/10 flex flex-col"
+                className="rounded-xl shadow-md overflow-hidden group duration-100 bg-[var(--surface)] border border-[var(--border)] hover:border-[var(--border-strong)] hover:shadow-cyan-700/10 flex flex-col"
               >
                 <div className="p-3 flex flex-col gap-2">
-                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                     {item.preview?.faviconUrl && (
                       <Image
                         src={item.preview.faviconUrl}
@@ -106,11 +105,11 @@ export default function LinkList({ items }: LinkListProps) {
                     )}
                     <span className="truncate">{getDomain(item)}</span>
                   </div>
-                  <div className="text-sm font-semibold text-gray-100 line-clamp-2">
+                  <div className="text-sm font-semibold text-[var(--text)] line-clamp-2">
                     {getTitle(item)}
                   </div>
                   {getDescription(item) && (
-                    <div className="text-xs text-gray-400 line-clamp-2">
+                    <div className="text-xs text-[var(--text-muted)] line-clamp-2">
                       {getDescription(item)}
                     </div>
                   )}
@@ -119,7 +118,7 @@ export default function LinkList({ items }: LinkListProps) {
                       {item.tags.slice(0, 3).map((tag, i) => (
                         <span
                           key={i}
-                          className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-900/30 text-cyan-300"
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--surface-hover)] text-[var(--blue-300)]"
                         >
                           {tag}
                         </span>
