@@ -19,6 +19,7 @@ export const captureValidator = v.union(
     title: v.optional(v.string()),
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("text"),
@@ -31,6 +32,7 @@ export const captureValidator = v.union(
     title: v.optional(v.string()),
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("link"),
@@ -45,6 +47,7 @@ export const captureValidator = v.union(
     note: v.optional(v.string()),
     linkPreviewId: v.optional(v.id("link_previews")),
     userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("code"),
@@ -57,6 +60,7 @@ export const captureValidator = v.union(
     title: v.optional(v.string()),
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
   }),
   v.object({
     kind: v.literal("screenshot"),
@@ -77,6 +81,7 @@ export const captureValidator = v.union(
     title: v.optional(v.string()),
     note: v.optional(v.string()),
     userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
   })
 );
 
@@ -85,7 +90,14 @@ export default defineSchema({
     .index("by_category_and_kind", ["category", "kind"])
     .index("by_user", ["userId"]) 
     .index("by_user_category_and_kind", ["userId", "category", "kind"])
-    .index("by_user_and_kind", ["userId", "kind"]),
+    .index("by_user_and_kind", ["userId", "kind"])
+    // CLIP ViT-B/32 projection dimension. Scoping the index by userId keeps
+    // one user's vectors out of another's result set at the index level.
+    .vectorIndex("by_localEmbedding", {
+      vectorField: "localEmbedding",
+      dimensions: 512,
+      filterFields: ["userId"],
+    }),
   link_previews: defineTable({
     userId: v.string(),
     canonicalUrl: v.string(),

@@ -5,7 +5,8 @@
  * Nothing in ai.ts or search.ts is modified — both paths can coexist.
  */
 
-import { mutation, query } from "./_generated/server";
+import { action, internalQuery, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 /* ---------- helpers ---------- */
@@ -48,13 +49,44 @@ export const patchLocalEmbedding = mutation({
   },
 });
 
+/**
+ * Apply automatically derived metadata to a capture.
+ *
+ * Kept separate from the insert so that tagging failures (model not loaded,
+ * offscreen document evicted) never block the capture itself from saving.
+ */
+export const applyAutoMetadata = mutation({
+  args: {
+    id: v.id("captures"),
+    tags: v.optional(v.array(v.string())),
+    domain: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, tags, domain }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    const doc = await ctx.db.get(id);
+    if (!doc || (doc as any).userId !== identity.subject)
+      throw new Error("Not found or forbidden");
+
+    const patch: Record<string, unknown> = {};
+    if (tags && tags.length) patch.tags = tags;
+    if (domain) patch.domain = domain;
+    if (Object.keys(patch).length === 0) return { ok: true, patched: false } as const;
+
+    await ctx.db.patch(id, patch);
+    return { ok: true, patched: true } as const;
+  },
+});
+
 /* ---------- queries ---------- */
 
 /**
- * Semantic search across ALL capture types using localEmbedding vectors.
+ * @deprecated Superseded by `searchIndexed`, which uses the by_localEmbedding
+ * vector index. This version collects every capture for the user and scores it
+ * in JS, which is O(n) per keystroke and will exceed Convex read limits once a
+ * library grows past a few thousand items. Kept only for comparison.
  *
- * The caller passes in a pre-computed query vector (generated client-side
- * with CLIP's text encoder) so no server-side API call is needed.
+ * Semantic search across ALL capture types using localEmbedding vectors.
  */
 export const searchByVector = query({
   args: {
@@ -206,5 +238,197 @@ export const embeddingStats = query({
       searchable: withLocalEmbedding,
       byKind,
     } as const;
+  },
+});
+
+/* ---------- indexed vector search ---------- */
+
+/**
+ * Hydrate vector-search hits into result rows.
+ *
+ * ctx.vectorSearch returns only { _id, _score }, and it is only callable from
+ * an action, so the documents are loaded here and re-attached to their scores.
+ */
+export const hydrateSearchHits = internalQuery({
+  args: {
+    ids: v.array(v.id("captures")),
+    scores: v.array(v.float64()),
+    userId: v.string(),
+  },
+  handler: async (ctx, { ids, scores, userId }) => {
+    const scoreById = new Map<string, number>();
+    ids.forEach((id, i) => scoreById.set(id, scores[i] ?? 0));
+
+    const docs = await Promise.all(ids.map((id) => ctx.db.get(id)));
+
+    const rows = await Promise.all(
+      docs
+        // Defensive: the vector index is filtered by userId, but never return a
+        // row we cannot prove belongs to the caller.
+        .filter((d): d is NonNullable<typeof d> => !!d && (d as any).userId === userId)
+        .map(async (doc: any) => {
+          let imageUrl: string | null = null;
+          if ((doc.kind === "image" || doc.kind === "screenshot") && doc.storageId) {
+            imageUrl = await ctx.storage.getUrl(doc.storageId);
+          }
+          return {
+            id: doc._id,
+            kind: doc.kind as string,
+            score: scoreById.get(doc._id) ?? 0,
+            imageUrl,
+            pageUrl: doc.url ?? null,
+            title: doc.title ?? doc.alt ?? null,
+            alt: doc.alt ?? null,
+            tags: doc.tags ?? [],
+            category: doc.category ?? null,
+            width: doc.width ?? null,
+            height: doc.height ?? null,
+            storageId: doc.storageId ?? null,
+            content: doc.content ?? null,
+            href: doc.href ?? null,
+            text: doc.text ?? null,
+            linkPreviewId: doc.linkPreviewId ?? null,
+          };
+        })
+    );
+
+    return rows.sort((a, b) => b.score - a.score);
+  },
+});
+
+/**
+ * Semantic search backed by the Convex vector index.
+ *
+ * Replaces the full-table scan in `searchByVector`, which loaded every capture
+ * for the user and scored it in JS on each keystroke.
+ */
+export const searchIndexed = action({
+  args: {
+    vector: v.array(v.float64()),
+    limit: v.optional(v.number()),
+    minScore: v.optional(v.number()),
+    minZ: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { vector, limit, minScore: argMinScore, minZ: argMinZ }
+  ): Promise<{ results: any[]; diagnostics: any }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { results: [], diagnostics: { error: "Unauthorized" } };
+
+    const take = Math.max(1, Math.min(256, limit ?? 30));
+
+    // A floor, not the decision. CLIP text/image cosines are compressed into a
+    // narrow band by the modality gap, so an absolute cutoff cannot separate a
+    // real match from the nearest irrelevant neighbour. It only discards the
+    // obviously hopeless.
+    const minScore = Math.max(-1, Math.min(1, argMinScore ?? 0.15));
+
+    // The actual decision: how far above this query's own score distribution a
+    // result stands. Unlike an absolute threshold, this transfers across
+    // queries, models and library sizes, because it is measured in standard
+    // deviations rather than raw cosine units.
+    const minZ = argMinZ ?? 1.2;
+
+    // Overfetch: the distribution needs enough samples to have a meaningful
+    // mean and spread. Scoring 4 neighbours tells us nothing about what
+    // "unusually close" looks like for this query.
+    const candidateCount = Math.min(256, Math.max(take * 4, 40));
+
+    const hits = await ctx.vectorSearch("captures", "by_localEmbedding", {
+      vector,
+      limit: candidateCount,
+      filter: (q) => q.eq("userId", identity.subject),
+    });
+
+    const scores = hits.map((h) => h._score);
+    const mean =
+      scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    const variance =
+      scores.length > 1
+        ? scores.reduce((acc, x) => acc + (x - mean) ** 2, 0) / (scores.length - 1)
+        : 0;
+    const std = Math.sqrt(variance);
+
+    // With too few samples, or a degenerate distribution where everything is
+    // equally (dis)similar, there is no outlier to find. Returning the nearest
+    // neighbours anyway is what produced "man eating banana" -> four unrelated
+    // LinkedIn posts.
+    const canUseZ = hits.length >= 8 && std > 1e-6;
+
+    const kept = hits
+      .filter((h) => h._score >= minScore)
+      .filter((h) => (canUseZ ? (h._score - mean) / std >= minZ : true))
+      .slice(0, take);
+
+    const results: any[] = await ctx.runQuery(internal.local_ai.hydrateSearchHits, {
+      ids: kept.map((h) => h._id),
+      scores: kept.map((h) => h._score),
+      userId: identity.subject,
+    });
+
+    return {
+      results,
+      diagnostics: {
+        candidates: hits.length,
+        kept: kept.length,
+        mean: Number(mean.toFixed(4)),
+        std: Number(std.toFixed(4)),
+        minScore,
+        minZ,
+        usedZ: canUseZ,
+        topScores: hits.slice(0, 5).map((h) => ({
+          score: Number(h._score.toFixed(4)),
+          z: std > 1e-6 ? Number(((h._score - mean) / std).toFixed(2)) : null,
+        })),
+      },
+    };
+  },
+});
+
+/* ---------- re-index ---------- */
+
+/**
+ * Captures that predate local embeddings, oldest first.
+ *
+ * Returns a resolved image URL alongside each row so the extension can embed
+ * without a second round trip. Paged rather than returning everything, since a
+ * large library would otherwise blow the query read limit.
+ */
+export const listNeedingEmbedding = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { items: [], remaining: 0 } as const;
+
+    const take = Math.max(1, Math.min(50, limit ?? 10));
+
+    const all = await ctx.db
+      .query("captures")
+      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
+      .collect();
+
+    const pending = all.filter(
+      (d: any) => !Array.isArray(d.localEmbedding) || d.localEmbedding.length === 0
+    );
+
+    const items = await Promise.all(
+      pending.slice(0, take).map(async (d: any) => ({
+        id: d._id,
+        kind: d.kind as string,
+        url: d.url ?? null,
+        // Prefer stored bytes over the original src: the source page may be
+        // gone, auth-walled, or hotlink-protected by the time we re-index.
+        imageUrl: d.storageId ? await ctx.storage.getUrl(d.storageId) : (d.src ?? null),
+        width: d.width ?? null,
+        height: d.height ?? null,
+        content: d.content ?? null,
+        text: d.text ?? null,
+        href: d.href ?? null,
+        tags: d.tags ?? [],
+      }))
+    );
+
+    return { items, remaining: pending.length } as const;
   },
 });

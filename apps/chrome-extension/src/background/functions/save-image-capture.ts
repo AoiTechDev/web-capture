@@ -1,6 +1,12 @@
 import type { ConvexClient } from "convex/browser";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import { getImageDimensions } from "~contents/utils/image-utils";
+// Static, not dynamic: an MV3 service worker may only call importScripts()
+// during initial evaluation, and Parcel compiles runtime import() to exactly
+// that. A dynamic import here fails with a NetworkError at message time.
+import { deriveMetadata, mergeTags } from "./derive-metadata";
+import { suggestTags } from "./auto-tag";
+import { embedImageFromUrl } from "./local-embeddings";
 
 export const saveImageCapture = async ({
     msg, convex, sendResponse
@@ -45,9 +51,12 @@ export const saveImageCapture = async ({
     // Generates a 512-dim vector from the image using Transformers.js.
     // This is the only embedding path: the OpenAI fallback was removed so
     // that saving a capture never incurs API cost.
+    // Signals that need no model: source domain and image shape.
+    const derived = deriveMetadata({ url: msg.data.url, width, height });
+
+    let autoTags: string[] = [];
     try {
       if (docId) {
-        const { embedImageFromUrl } = await import('./local-embeddings');
         const localVec = await embedImageFromUrl(msg.data.src);
         if (localVec && localVec.length > 0) {
           await convex.mutation((api as any).local_ai.patchLocalEmbedding, {
@@ -55,6 +64,12 @@ export const saveImageCapture = async ({
             localEmbedding: localVec,
           });
           console.log('[save-image] ✅ Local CLIP embedding saved (' + localVec.length + 'd)');
+
+          // Zero-shot classification against the label vocabulary. Same vector,
+          // no extra inference on the image itself.
+          const suggested = await suggestTags(localVec);
+          autoTags = suggested.map((t) => t.tag);
+          console.log('[save-image] auto tags:', suggested.map((t) => `${t.tag} (${t.score.toFixed(3)})`).join(', '));
         }
       }
     } catch (e) {
@@ -63,10 +78,19 @@ export const saveImageCapture = async ({
       console.warn('[save-image] Local embedding failed:', e);
     }
 
-    if (Array.isArray(msg.data.tags)) {
+    // User-supplied tags win over derived ones, which win over model guesses.
+    const allTags = mergeTags(msg.data.tags, derived.tags, autoTags);
+    if (allTags.length && docId) {
       try {
-        await convex.mutation(api.upload.upsertTags, { names: msg.data.tags });
-      } catch {}
+        await convex.mutation((api as any).local_ai.applyAutoMetadata, {
+          id: docId,
+          tags: allTags,
+          domain: derived.domain ?? undefined,
+        });
+        await convex.mutation(api.upload.upsertTags, { names: allTags });
+      } catch (e) {
+        console.warn('[save-image] Failed to apply auto metadata:', e);
+      }
     }
 
     sendResponse({ statusCode: 200, message: 'Image capture saved' });

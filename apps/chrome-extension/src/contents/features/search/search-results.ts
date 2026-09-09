@@ -131,11 +131,19 @@ export function renderSearchResults(
     title.className = 'search-result-title'
     
     
+    const host = (() => {
+      try { return item.pageUrl ? new URL(item.pageUrl).host.replace(/^www\./, '') : '' } catch { return '' }
+    })()
+
     if (item.kind === 'link') {
       title.textContent = item.title || item.domain || 'Untitled'
     } else {
-      const host = (() => { try { return item.pageUrl ? new URL(item.pageUrl).host : '' } catch { return '' } })()
-      title.textContent = host || 'Website'
+      // Auto-tags describe what the capture actually is; the host is the same
+      // string on every row from a given site and cannot tell them apart.
+      const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean) : []
+      title.textContent = tags.length
+        ? tags.slice(0, 3).join(' · ')
+        : item.title || item.alt || host || 'Capture'
     }
 
     const sub = document.createElement('div')
@@ -147,7 +155,10 @@ export function renderSearchResults(
       const desc = item.description ? ` • ${item.description.slice(0, 60)}${item.description.length > 60 ? '...' : ''}` : ''
       sub.textContent = domain + desc
     } else {
-      sub.textContent = item.category || ''
+      // Surfacing the match strength makes a bad ranking visible instead of
+      // looking like an arbitrary result set.
+      const pct = typeof item.score === 'number' ? `${Math.round(item.score * 100)}% match` : ''
+      sub.textContent = [host, item.category, pct].filter(Boolean).join(' · ')
     }
 
     meta.appendChild(title)

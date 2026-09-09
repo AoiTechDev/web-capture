@@ -6,6 +6,9 @@ import { saveImageCapture } from '~background/functions/save-image-capture';
 import { screenshotElement } from '~background/functions/screenshot-element';
 import { uploadCroppedImage } from '~background/functions/upload-cropped-image';
 import { uploadCroppedDataurl } from '~background/functions/upload-cropped-dataurl';
+// Static: reindex is reached from a message handler, past the point where an
+// MV3 worker is still allowed to importScripts().
+import { runReindex, isReindexing } from '~background/functions/reindex';
 
 
 const publishableKey = process.env.PLASMO_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -14,6 +17,12 @@ if (!publishableKey) {
 }
 
 const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
+
+// Build marker: prints on every service worker start. If the value below
+// does not match the running console output, Chrome is serving a cached
+// worker and the extension needs a real reload.
+const BUILD_MARKER = 'z-score-search 23:36:20';
+console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 async function getToken() {
   const clerk = await createClerkClient({
@@ -144,10 +153,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const { embedText } = await import('./functions/local-embeddings');
             const vector = await embedText(q);
             if (vector && vector.length > 0) {
-              const { results, diagnostics } = await convex.query(
-                (api as any).local_ai.searchByVector,
-                // Deliberately permissive until the score distribution is known;
-                // see `diagnostics.topScores` in the log below to calibrate it.
+              // Action, not query: Convex vector search is only callable from
+              // an action. Backed by the by_localEmbedding vector index rather
+              // than a full scan of the user's captures.
+              const { results, diagnostics } = await convex.action(
+                (api as any).local_ai.searchIndexed,
                 { vector, limit, minScore: 0.15 }
               );
               console.log('[Search] Local results:', results?.length, 'scores:', results?.map((r: any) => r.score?.toFixed(3)));
@@ -178,6 +188,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             console.error('[Search] keyword fallback threw:', e);
             sendResponse({ results: [] });
           }
+          return;
+        }
+
+        if (msg.type === 'REINDEX_STATUS') {
+          const { remaining } = await convex.query((api as any).local_ai.listNeedingEmbedding, { limit: 1 });
+          sendResponse({ remaining, running: isReindexing() });
+          return;
+        }
+
+        if (msg.type === 'REINDEX_START') {
+          if (isReindexing()) {
+            sendResponse({ started: false, reason: 'already running' });
+            return;
+          }
+          // Acknowledge immediately: a full re-index runs for minutes, far past
+          // the lifetime of this message channel. Progress is broadcast instead.
+          sendResponse({ started: true });
+          void runReindex({
+            convex,
+            maxItems: typeof msg.maxItems === 'number' ? msg.maxItems : undefined,
+            onProgress: (p) => {
+              chrome.runtime.sendMessage({ type: 'REINDEX_PROGRESS', progress: p }).catch(() => {
+                // nothing listening (popup closed) - progress is advisory only
+              });
+            },
+          }).catch((e) => console.error('[reindex] failed:', e));
           return;
         }
 
