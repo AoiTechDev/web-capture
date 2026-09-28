@@ -9,17 +9,17 @@ import { broadcastSessionState } from "./session-broadcast";
 import { suggestTags } from "./auto-tag";
 import { embedImageFromUrl } from "./local-embeddings";
 
+/** Resolves once the capture is stored; throws if it could not be saved. */
 export const saveImageCapture = async ({
-    msg, convex, sendResponse
+    msg, convex
 }: {
     msg: any;
     convex: ConvexClient;
-    sendResponse: (response: { statusCode: number; message: string }) => void;
-}) => {
+}): Promise<void> => {
     const postUrl = await convex.mutation(api.upload.generateUploadUrl, {});
 
     const imageResp = await fetch(msg.data.src);
-    if (!imageResp.ok) throw new Error('Failed to download image');
+    if (!imageResp.ok) throw new Error(`Failed to download image (HTTP ${imageResp.status})`);
     const blob = await imageResp.blob();
 
     const result = await fetch(postUrl, {
@@ -27,7 +27,7 @@ export const saveImageCapture = async ({
       headers: { 'Content-Type': blob.type || 'application/octet-stream' },
       body: blob,
     });
-    if (!result.ok) throw new Error('Upload failed');
+    if (!result.ok) throw new Error(`Upload failed (HTTP ${result.status})`);
 
     const { storageId } = await result.json();
     const { width, height } = (await getImageDimensions(blob)) as {
@@ -123,7 +123,4 @@ export const saveImageCapture = async ({
         console.warn('[save-image] Failed to merge session tags:', e);
       }
     }
-
-    sendResponse({ statusCode: 200, message: 'Image capture saved' });
-    return;
 }

@@ -1,3 +1,4 @@
+import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
 import { getRecentCategories, addRecentCategory, addRecentTags } from "../category/category-storage"
 import { showCategoryOverlay } from "../category/category-overlay"
 
@@ -45,7 +46,7 @@ export async function captureCurrentPageLink(promptForCategory?: boolean) {
   }
 
   try {
-    await chrome.runtime.sendMessage({
+    const res = await chrome.runtime.sendMessage({
       type: "SAVE_NON_IMAGE_CAPTURE",
       data: {
         kind: "link",
@@ -57,9 +58,10 @@ export async function captureCurrentPageLink(promptForCategory?: boolean) {
         tags,
       },
     })
-    return true
+    return reportCaptureResult(res)
   } catch (e) {
     console.error("❌ Failed to capture current page link:", e)
+    showCaptureError(e instanceof Error ? e.message : String(e))
     return false
   }
 }

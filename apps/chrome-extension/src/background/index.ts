@@ -25,26 +25,89 @@ const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 const BUILD_MARKER = 'live-count 00:19:48';
 console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
-async function getToken() {
-  const clerk = await createClerkClient({
-    publishableKey,
+/* ─── Auth ──────────────────────────────────────────────────────── */
+
+type ClerkClient = Awaited<ReturnType<typeof createClerkClient>>;
+
+// One Clerk client for the worker's lifetime. Creating it loads the client
+// from Clerk's API, which is far too slow to repeat on every message.
+let clerkPromise: Promise<ClerkClient> | null = null;
+let clerkLoadedAt = 0;
+
+// A signed-out instance never learns about a sign-in made in the popup, so it
+// is reloaded - but at most this often, not on every message.
+const SIGNED_OUT_RELOAD_MS = 5_000;
+
+function loadClerk(): Promise<ClerkClient> {
+  clerkLoadedAt = Date.now();
+  const p = createClerkClient({
+    publishableKey: publishableKey!,
     syncHost: process.env.PLASMO_PUBLIC_CLERK_SYNC_HOST
   });
+  clerkPromise = p;
+  // A failed load must not be cached forever.
+  p.catch(() => {
+    if (clerkPromise === p) clerkPromise = null;
+  });
+  return p;
+}
 
-  if (!clerk.session) {
+async function getClerk(): Promise<ClerkClient> {
+  if (!clerkPromise) return loadClerk();
+  const clerk = await clerkPromise;
+  if (!clerk.session && Date.now() - clerkLoadedAt > SIGNED_OUT_RELOAD_MS) {
+    return loadClerk();
+  }
+  return clerk;
+}
+
+/** A Convex JWT for the signed-in user, or null. Never leaves the worker. */
+async function getToken(forceRefresh = false): Promise<string | null> {
+  try {
+    const clerk = await getClerk();
+    if (!clerk.session) return null;
+    const token = await clerk.session.getToken({ template: 'convex', skipCache: forceRefresh });
+    return token ?? null;
+  } catch (e) {
+    // Session revoked or network failure: start from a fresh client next time.
+    console.warn('[Service Worker]: Could not get a session token:', e);
+    clerkPromise = null;
     return null;
   }
+}
 
-  const token = await clerk.session?.getToken({ template: 'convex' });
-  if (token) {
-    try {
-      const [, payloadB64] = token.split('.');
-      const json = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(payloadB64), c => c.charCodeAt(0))));
-    } catch (e) {
-      console.warn('[Service Worker]: Failed to decode JWT payload for logging')
-    }
+// Convex asks for a token itself, on connect and whenever the current one
+// expires, and gets a fresh one from Clerk each time.
+let convexSignedIn: boolean | null = null;
+
+/**
+ * Point the shared Convex client at the current auth state.
+ *
+ * setAuth is only called when the state flips (signed out -> in or back), not
+ * per message: concurrent messages re-setting auth used to race each other.
+ */
+async function syncAuth(): Promise<boolean> {
+  const signedIn = (await getToken()) !== null;
+  if (signedIn !== convexSignedIn) {
+    convexSignedIn = signedIn;
+    convex.setAuth(({ forceRefreshToken }) => getToken(forceRefreshToken));
   }
-  return token ?? null
+  return signedIn;
+}
+
+/** Messages that save something; each answers { ok } once the save finished. */
+const CAPTURE_MESSAGES = new Set([
+  'SAVE_NON_IMAGE_CAPTURE',
+  'SAVE_IMAGE_CAPTURE',
+  'SCREENSHOT_ELEMENT',
+  'UPLOAD_CROPPED_IMAGE',
+  'UPLOAD_CROPPED_DATAURL',
+]);
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as any).message);
+  return String(e ?? 'Unknown error');
 }
 
 // ── Pre-load CLIP models in the background so first capture is fast ──
@@ -57,19 +120,52 @@ import('./functions/local-embeddings')
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   ;(async () => {
     try {
-      const token = await getToken();
-      if (token) convex.setAuth(async () => token);
-      else convex.setAuth(async () => null);
+      const signedIn = await syncAuth();
       if (msg?.type?.startsWith?.('SEARCH')) {
-        console.log('[Search] msg=', msg.type, 'authenticated=', token !== null);
+        console.log('[Search] msg=', msg.type, 'authenticated=', signedIn);
       }
 
       if (msg && typeof msg === 'object' && 'type' in msg) {
 
-        // Check authentication status
+        // Check authentication status. Only a boolean: the token itself is
+        // never sent to a content script, where the page could get at it.
         if (msg.type === 'CHECK_AUTH') {
-          const isAuthenticated = token !== null;
-          sendResponse({ isAuthenticated, token: isAuthenticated ? token : null });
+          sendResponse({ signedIn });
+          return;
+        }
+
+        // Saves are awaited so the caller learns whether it worked and can
+        // tell the user; the channel stays open because the listener returns true.
+        if (CAPTURE_MESSAGES.has(msg.type)) {
+          if (!signedIn) {
+            sendResponse({ ok: false, error: 'Not signed in' });
+            return;
+          }
+          try {
+            if (msg.type === 'SAVE_NON_IMAGE_CAPTURE') {
+              await saveNonImageCapture({
+                captureData: {
+                  kind: msg.data.kind,
+                  ...msg.data,
+                  url: msg.data.url || 'unknown',
+                  timestamp: Date.now(),
+                },
+                convex,
+              });
+            } else if (msg.type === 'SAVE_IMAGE_CAPTURE') {
+              await saveImageCapture({ msg, convex });
+            } else if (msg.type === 'SCREENSHOT_ELEMENT') {
+              await screenshotElement({ msg, sender });
+            } else if (msg.type === 'UPLOAD_CROPPED_IMAGE') {
+              await uploadCroppedImage({ msg, convex });
+            } else {
+              await uploadCroppedDataurl({ msg, convex });
+            }
+            sendResponse({ ok: true });
+          } catch (e) {
+            console.error(`[Service Worker]: ${msg.type} failed:`, e);
+            sendResponse({ ok: false, error: errorMessage(e) });
+          }
           return;
         }
 
@@ -92,57 +188,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
           sendResponse({ id });
           return;
-        }
-
-        if (msg.type === 'SAVE_NON_IMAGE_CAPTURE') {
-         
-
-          saveNonImageCapture({
-            captureData: {
-              kind: msg.data.kind,
-              ...msg.data,
-              url: msg.data.url || 'unknown',
-              timestamp: Date.now(),
-            },
-            convex,
-            sendResponse,
-          });
-        }
-
-        if (msg.type === 'SAVE_IMAGE_CAPTURE') {
-        
-          saveImageCapture({
-            msg,
-            convex,
-            sendResponse,
-          });
-        }
-
-        if (msg.type === 'SCREENSHOT_ELEMENT') {
-        
-          screenshotElement({
-            msg,
-            sender,
-            sendResponse,
-          });
-        }
-
-        if (msg.type === 'UPLOAD_CROPPED_IMAGE') {
-          
-          uploadCroppedImage({
-            msg,
-            convex,
-            sendResponse,
-          });
-        }
-
-        if (msg.type === 'UPLOAD_CROPPED_DATAURL') {
-         
-          uploadCroppedDataurl({
-            msg,
-            convex,
-            sendResponse,
-          });
         }
 
         if (msg.type === 'SEARCH_SEMANTIC') {
@@ -303,15 +348,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
-      const tokenForCaller = await getToken();
-   
-      sendResponse({ token: tokenForCaller })
+      sendResponse({ ok: false, error: 'Unknown message' })
     } catch (error) {
       console.error('[Service Worker]: Error occured -> ', JSON.stringify(error))
       if (error && typeof error === 'object') {
         console.error('[Service Worker]: Error details -> ', error)
       }
-      sendResponse({ token: null, statusCode: 500, message: 'Failed to handle message' })
+      sendResponse({ ok: false, error: 'Failed to handle message' })
     }
   })();
   return true;

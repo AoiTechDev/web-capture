@@ -25,13 +25,13 @@ function getEmbeddableText(data: any): string | null {
   }
 }
 
+/** Resolves once the capture is stored; throws if it could not be saved. */
 export const saveNonImageCapture = async ({
-    captureData, convex, sendResponse
+    captureData, convex
 }: {
     captureData: any;
     convex: ConvexClient;
-    sendResponse: (response: { statusCode: number; message: string }) => void;
-}) => {
+}): Promise<void> => {
 
       if (Array.isArray((captureData as any).tags)) {
         try {
@@ -69,8 +69,8 @@ export const saveNonImageCapture = async ({
         console.warn('[save-non-image] Local embedding failed (non-blocking):', e);
       }
 
-      // Same grouping as the visual paths: text, links and code saved during a
-      // browsing burst belong to that burst too.
+      // Same grouping as the visual paths: text and links saved while the user
+      // has a session running join that session.
       if (insertedId) {
         try {
           const derived = deriveMetadata({ url: captureData?.url });
@@ -92,7 +92,4 @@ export const saveNonImageCapture = async ({
           console.warn('[save-non-image] Failed to assign session:', e);
         }
       }
-
-      sendResponse({ statusCode: 200, message: 'Non-image capture saved' });
-      return;
 }

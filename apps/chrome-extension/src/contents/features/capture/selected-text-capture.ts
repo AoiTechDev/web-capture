@@ -1,3 +1,4 @@
+import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
 import { showCategoryOverlay } from "../category/category-overlay"
 import { addRecentCategory, addRecentTags, getRecentCategories } from "../category/category-storage"
 
@@ -47,7 +48,7 @@ export async function captureSelectedText(promptForCategory?: boolean) {
   }
 
   try {
-    await chrome.runtime.sendMessage({
+    const res = await chrome.runtime.sendMessage({
       type: "SAVE_NON_IMAGE_CAPTURE",
       data: {
         kind: "text",
@@ -58,9 +59,10 @@ export async function captureSelectedText(promptForCategory?: boolean) {
         tags
       }
     })
-    return true
+    return reportCaptureResult(res)
   } catch (error) {
     console.error("❌ Failed to capture selected text:", error)
+    showCaptureError(error instanceof Error ? error.message : String(error))
     return false
   }
 }

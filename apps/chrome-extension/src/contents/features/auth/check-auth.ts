@@ -6,7 +6,7 @@ export async function checkAuth(): Promise<boolean> {
         resolve(false)
         return
       }
-      resolve(response?.isAuthenticated ?? false)
+      resolve(response?.signedIn === true)
     })
   })
 }

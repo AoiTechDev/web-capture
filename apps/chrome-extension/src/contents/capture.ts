@@ -194,11 +194,6 @@ document.addEventListener(
 
 chrome.runtime.onMessage.addListener((message) => {
 
-  if (message?.type === "GET_TOKEN") {
-    chrome.runtime.sendMessage({ type: "GET_TOKEN" }, (response) => { 
-      console.log('[Content Script]: Response from background', response)
-    })
-  }
   if (message?.type === "START_SCREENSHOT_MODE") {
     void (async () => {
       const isAuthenticated = await checkAuth()
@@ -211,9 +206,6 @@ chrome.runtime.onMessage.addListener((message) => {
     })()
   }
   if (message?.type === "CROP_AND_UPLOAD") {
-    void cropAndUpload(message as {
-      dataUrl: string
-      rect: { x: number; y: number; width: number; height: number; dpr: number; url: string }
-    })
+    void cropAndUpload(message as Parameters<typeof cropAndUpload>[0])
   }
 })

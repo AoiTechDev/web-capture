@@ -6,11 +6,16 @@ import { broadcastSessionState } from "./session-broadcast";
 import { suggestTags } from "./auto-tag";
 import { embedImageFromUrl } from "./local-embeddings";
 
-export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
+/** Kinds a cropped screenshot may be saved as; anything else is a region shot. */
+function captureKind(kind: unknown): 'screenshot' | 'element' | 'viewport' {
+    return kind === 'element' || kind === 'viewport' ? kind : 'screenshot';
+}
+
+/** Resolves once the capture is stored; throws if it could not be saved. */
+export const uploadCroppedDataurl = async ({msg, convex}:{
     msg: any;
     convex: ConvexClient;
-    sendResponse: (response: { statusCode: number; message: string }) => void;
-}) => {
+}): Promise<void> => {
     const res = await fetch(msg.dataUrl as string);
     const blob = await res.blob();
     const postUrl = await convex.mutation(api.upload.generateUploadUrl, {});
@@ -19,7 +24,7 @@ export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
       headers: { 'Content-Type': 'image/png' },
       body: blob,
     });
-    if (!uploadRes.ok) throw new Error('Upload failed');
+    if (!uploadRes.ok) throw new Error(`Upload failed (HTTP ${uploadRes.status})`);
     const { storageId } = await uploadRes.json();
 
     const docId = await convex.mutation(api.upload.saveImageCapture, {
@@ -34,7 +39,9 @@ export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
       tags: Array.isArray(msg.tags) ? msg.tags : undefined,
       title: typeof msg.title === 'string' ? msg.title : undefined,
       note: typeof msg.note === 'string' ? msg.note : undefined,
-      kind: 'screenshot',
+      kind: captureKind(msg.kind),
+      tagName: typeof msg.tagName === 'string' ? msg.tagName : undefined,
+      clipped: typeof msg.clipped === 'boolean' ? msg.clipped : undefined,
     });
     // Signals that need no model: source domain and image shape.
     const derived = deriveMetadata({ url: msg.url, width: msg.width, height: msg.height });
@@ -100,7 +107,4 @@ export const uploadCroppedDataurl = async ({msg, convex, sendResponse}:{
         console.warn('[screenshot] Failed to merge session tags:', e);
       }
     }
-
-    sendResponse({ statusCode: 200, message: 'Screenshot saved' });
-    return; 
 }
