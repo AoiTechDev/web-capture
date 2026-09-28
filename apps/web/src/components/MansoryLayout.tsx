@@ -245,8 +245,9 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   title="Delete"
                   onClick={(e) => {
                     e.stopPropagation();
+                    // The server deletes the capture's own file; it never
+                    // takes a storage id from the client.
                     deleteById({
-                      storageId: item.storageId as Id<"_storage">,
                       docId: item._id as Id<"captures">,
                     });
                   }}

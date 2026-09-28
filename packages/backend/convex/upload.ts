@@ -1,13 +1,50 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { captureValidator } from "./schema";
+import { assertLocalEmbedding } from "./helpers";
 
 export const generateUploadUrl = mutation(async (ctx) => {
   const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Unauthorized");
 
   return await ctx.storage.generateUploadUrl();
 });
 
+/**
+ * Check every reference a client put on a new capture before it is stored.
+ *
+ * A capture may only point at the caller's own session and link preview, and
+ * at a storage object no other capture already owns - otherwise a client could
+ * adopt (and later delete) someone else's file by guessing its id.
+ */
+async function assertCaptureRefs(
+  ctx: MutationCtx,
+  userId: string,
+  refs: {
+    sessionId?: Id<"sessions">;
+    linkPreviewId?: Id<"link_previews">;
+    storageId?: Id<"_storage">;
+    localEmbedding?: number[];
+  }
+) {
+  if (refs.sessionId) {
+    const session = await ctx.db.get(refs.sessionId);
+    if (!session || session.userId !== userId) throw new Error("Session not found");
+  }
+  if (refs.linkPreviewId) {
+    const preview = await ctx.db.get(refs.linkPreviewId);
+    if (!preview || preview.userId !== userId) throw new Error("Link preview not found");
+  }
+  if (refs.storageId) {
+    const taken = await ctx.db
+      .query("captures")
+      .withIndex("by_storageId", (q) => q.eq("storageId", refs.storageId))
+      .first();
+    if (taken) throw new Error("Storage object already in use");
+  }
+  assertLocalEmbedding(refs.localEmbedding);
+}
 
 export const uploadCapture = mutation({
   args: v.object({
@@ -17,10 +54,32 @@ export const uploadCapture = mutation({
     const identity = await ctx.auth.getUserIdentity();
     
     if (!identity) throw new Error("Unauthorized");
+    // Server-owned fields: whatever the client sent for these is discarded.
+    // sessionId is attached by sessions.assignCapture, which also keeps the
+    // session's itemCount in step; accepting it here would bypass that count.
+    const {
+      userId: _userId,
+      status: _status,
+      error: _error,
+      sessionId: _sessionId,
+      ...rest
+    } = capture;
+    const c = rest as {
+      linkPreviewId?: Id<"link_previews">;
+      storageId?: Id<"_storage">;
+      localEmbedding?: number[];
+      category?: string;
+    };
+    await assertCaptureRefs(ctx, identity.subject, {
+      linkPreviewId: c.linkPreviewId,
+      storageId: c.storageId,
+      localEmbedding: c.localEmbedding,
+    });
     return await ctx.db.insert("captures", {
-      ...capture,
-      category: (capture as any).category ?? "unsorted",
+      ...rest,
+      category: c.category ?? "unsorted",
       userId: identity.subject,
+      status: "pending",
     });
   },
 });
@@ -38,19 +97,30 @@ export const saveImageCapture = mutation({
     tags: v.optional(v.array(v.string())),
     title: v.optional(v.string()),
     note: v.optional(v.string()),
-    kind: v.optional(v.union(v.literal("image"), v.literal("screenshot"))),
+    kind: v.optional(
+      v.union(
+        v.literal("image"),
+        v.literal("screenshot"),
+        v.literal("element"),
+        v.literal("viewport")
+      )
+    ),
+    /** element only: the picked element's tag. */
+    tagName: v.optional(v.string()),
+    /** element / viewport: cropped to the visible part of the page. */
+    clipped: v.optional(v.boolean()),
   }),
   handler: async (
     ctx,
-    { storageId, src, alt, url, timestamp, width, height, category, tags, title, note, kind }
+    { storageId, src, alt, url, timestamp, width, height, category, tags, title, note, kind, tagName, clipped }
   ) => {
     const identity = await ctx.auth.getUserIdentity();
     
     if (!identity) throw new Error("Unauthorized");
-    const insertedId = await ctx.db.insert("captures", {
-      kind: kind ?? "image",
+    await assertCaptureRefs(ctx, identity.subject, { storageId });
+
+    const common = {
       storageId,
-      src: src ?? "",
       alt,
       url,
       timestamp,
@@ -61,8 +131,19 @@ export const saveImageCapture = mutation({
       title,
       note,
       userId: identity.subject,
-    });
-    return insertedId;
+      status: "pending" as const,
+    };
+
+    if (kind === "element") {
+      return await ctx.db.insert("captures", { ...common, kind: "element", tagName, clipped });
+    }
+    if (kind === "viewport") {
+      return await ctx.db.insert("captures", { ...common, kind: "viewport", clipped });
+    }
+    if (kind === "screenshot") {
+      return await ctx.db.insert("captures", { ...common, kind: "screenshot", src: src ?? "" });
+    }
+    return await ctx.db.insert("captures", { ...common, kind: "image", src: src ?? "" });
   },
 });
 
@@ -71,19 +152,44 @@ export const saveImageCapture = mutation({
 
 export const deleteById = mutation({
   args: {
-    storageId: v.id("_storage"),
     docId: v.id("captures"),
+    /**
+     * Ignored: the file deleted is always the capture's own. Still accepted so
+     * dashboard tabs loaded before this change can delete until they reload.
+     */
+    storageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     
     if (!identity) throw new Error("Unauthorized");
     const doc = await ctx.db.get(args.docId);
-    if (!doc || (doc as any).userId !== identity.subject) {
+    if (!doc || doc.userId !== identity.subject) {
       throw new Error("Not found or permission denied");
     }
     await ctx.db.delete(args.docId);
-    await ctx.storage.delete(args.storageId);
+
+    // Only ever the capture's own file, never an id supplied by the client.
+    // Legacy rows may share a storage object, so keep it while anything else
+    // still points at it.
+    const storageId = (doc as { storageId?: Id<"_storage"> }).storageId;
+    if (storageId) {
+      const stillUsed = await ctx.db
+        .query("captures")
+        .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+        .first();
+      const exists = await ctx.db.system.get(storageId);
+      if (!stillUsed && exists) await ctx.storage.delete(storageId);
+    }
+
+    if (doc.sessionId) {
+      const session = await ctx.db.get(doc.sessionId);
+      if (session && session.userId === identity.subject) {
+        await ctx.db.patch(session._id, {
+          itemCount: Math.max(0, (session.itemCount ?? 0) - 1),
+        });
+      }
+    }
   },
 });
 

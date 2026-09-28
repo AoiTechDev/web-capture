@@ -8,8 +8,12 @@
 import { action, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { assertLocalEmbedding } from "./helpers";
 
 /* ---------- helpers ---------- */
+
+/** Capture kinds whose content is a stored image. */
+const VISUAL_KINDS = new Set(["image", "screenshot", "element", "viewport"]);
 
 function cosineSimilarity(a: number[], b: number[]): number {
   if (!a.length || !b.length || a.length !== b.length) return -1;
@@ -41,6 +45,7 @@ export const patchLocalEmbedding = mutation({
   handler: async (ctx, { id, localEmbedding }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
+    assertLocalEmbedding(localEmbedding);
     const doc = await ctx.db.get(id);
     if (!doc || (doc as any).userId !== identity.subject)
       throw new Error("Not found or forbidden");
@@ -160,10 +165,7 @@ export const searchByVector = query({
     const results = await Promise.all(
       scored.map(async ({ doc, score }: { doc: any; score: number }) => {
         let imageUrl: string | null = null;
-        if (
-          (doc.kind === "image" || doc.kind === "screenshot") &&
-          doc.storageId
-        ) {
+        if (VISUAL_KINDS.has(doc.kind) && doc.storageId) {
           imageUrl = await ctx.storage.getUrl(doc.storageId);
         }
         return {
@@ -200,13 +202,13 @@ export const searchByVector = query({
  * needs backfilling, not that the scoring is wrong.
  */
 export const embeddingStats = query({
-  args: { userId: v.optional(v.string()) },
-  handler: async (ctx, { userId: argUserId }) => {
-    // Dashboard / CLI calls have no end-user identity, so allow an explicit
-    // userId there; in-app callers keep using their own authenticated subject.
+  args: {},
+  handler: async (ctx) => {
+    // Only ever the caller's own library: a userId argument would let anyone
+    // read another user's stats.
     const identity = await ctx.auth.getUserIdentity();
-    const userId = argUserId ?? identity?.subject;
-    if (!userId) return { error: "Pass a userId (no authenticated identity)" } as const;
+    if (!identity) throw new Error("Unauthorized");
+    const userId = identity.subject;
 
     const all = await ctx.db
       .query("captures")
@@ -268,7 +270,7 @@ export const hydrateSearchHits = internalQuery({
         .filter((d): d is NonNullable<typeof d> => !!d && (d as any).userId === userId)
         .map(async (doc: any) => {
           let imageUrl: string | null = null;
-          if ((doc.kind === "image" || doc.kind === "screenshot") && doc.storageId) {
+          if (VISUAL_KINDS.has(doc.kind) && doc.storageId) {
             imageUrl = await ctx.storage.getUrl(doc.storageId);
           }
           return {
@@ -315,6 +317,7 @@ export const searchIndexed = action({
   ): Promise<{ results: any[]; diagnostics: any }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return { results: [], diagnostics: { error: "Unauthorized" } };
+    assertLocalEmbedding(vector, "vector");
 
     const take = Math.max(1, Math.min(256, limit ?? 30));
 
