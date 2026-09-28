@@ -280,8 +280,9 @@ export const listSessions = query({
         if (thumbCount > 0) {
           const captures = await ctx.db
             .query("captures")
-            .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-            .filter((q) => q.eq(q.field("sessionId"), s._id))
+            .withIndex("by_user_session", (q) =>
+              q.eq("userId", identity.subject).eq("sessionId", s._id)
+            )
             .take(24);
 
           const urls = await Promise.all(
@@ -326,8 +327,9 @@ export const getSession = query({
 
     const captures = await ctx.db
       .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-      .filter((q) => q.eq(q.field("sessionId"), id))
+      .withIndex("by_user_session", (q) =>
+        q.eq("userId", identity.subject).eq("sessionId", id)
+      )
       .collect();
 
     
@@ -355,7 +357,10 @@ export const getSession = query({
     
           if (c.kind === "link" && c.linkPreviewId) {
             const preview = await ctx.db.get(c.linkPreviewId);
-            return { ...item, preview };
+            // Never hand out a preview that belongs to someone else.
+            if (preview && (preview as any).userId === identity.subject) {
+              return { ...item, preview };
+            }
           }
     
           return item;
