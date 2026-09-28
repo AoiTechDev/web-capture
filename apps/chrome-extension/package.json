@@ -6,14 +6,9 @@
   "author": "Clerk",
   "scripts": {
     "build": "plasmo build",
-    "build:firefox": "plasmo build --target=firefox-mv2",
     "debug": "plasmo dev --verbose",
-    "debug:firefox": "plasmo dev --target=firefox-mv2 --verbose",
     "dev": "plasmo dev",
-    "dev:firefox": "plasmo dev --target=firefox-mv2",
-    "package": "plasmo package",
-    "package:firefox": "plasmo package --target=firefox-mv2",
-    "start:firefox": "web-ext run --source-dir ./build/firefox-mv2-dev"
+    "package": "plasmo package"
   },
   "dependencies": {
     "@clerk/chrome-extension": "^2.6.0",
