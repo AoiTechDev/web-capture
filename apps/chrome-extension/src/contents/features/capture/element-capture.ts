@@ -1,4 +1,6 @@
 import { captureElement } from "./capture-element"
+import { captureElementScreenshot } from "./screenshot-capture"
+import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
 import { showCategoryOverlay } from "../category/category-overlay"
 import { addRecentCategory, getRecentCategories, addRecentTags } from "../category/category-storage"
 import {
@@ -25,11 +27,11 @@ type PendingCapture =
       url: string
       timestamp: number
     }
-  | { kind: "code"; content: string; url: string; timestamp: number }
   | {
+      // Saved as a screenshot of `target`'s bounding box, not as data.
       kind: "element"
       tagName: string
-      content?: string
+      target: HTMLElement
       url: string
       timestamp: number
     }
@@ -39,6 +41,32 @@ let categoryPromptEnabled = false
 let selectedCategory: string | undefined
 let pendingElementData: PendingCapture | null = null
 let currentHoveredElement: HTMLElement | null = null
+
+/**
+ * Send one picked element to the background and tell the user if it failed.
+ * Throws only for transport errors (e.g. the extension was reloaded).
+ */
+async function sendCapture(data: PendingCapture, category?: string, tags?: string[]) {
+  if (data.kind === "element") {
+    // The highlight box sits on top of the element; keep it out of the shot,
+    // and stop hover tracking so a mouse move can't redraw it mid-capture.
+    const wasSelecting = isSelecting
+    if (wasSelecting) removeEventListeners()
+    hideHighlightOverlay()
+    currentHoveredElement = null
+    try {
+      await captureElementScreenshot(data.target, { category, tags })
+    } finally {
+      if (wasSelecting && isSelecting) addEventListeners()
+    }
+    return
+  }
+  const res = await chrome.runtime.sendMessage({
+    type: data.kind === "image" ? "SAVE_IMAGE_CAPTURE" : "SAVE_NON_IMAGE_CAPTURE",
+    data: { ...data, category, tags },
+  })
+  reportCaptureResult(res)
+}
 
 async function openCategoryOverlayAndHandlePending() {
   const categories = await (async () => {
@@ -110,23 +138,14 @@ async function openCategoryOverlayAndHandlePending() {
     selectedCategory = undefined
     categoryPromptEnabled = false
     try {
-      if (toSend.kind === "image") {
-        await chrome.runtime.sendMessage({
-          type: "SAVE_IMAGE_CAPTURE",
-        data: { ...toSend, category, tags },
-        })
-      } else {
-        await chrome.runtime.sendMessage({
-          type: "SAVE_NON_IMAGE_CAPTURE",
-        data: { ...toSend, category, tags },
-        })
-      }
+      await sendCapture(toSend, category, tags)
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e)
       if (errorMessage.includes("Extension context invalidated")) {
         alert("Extension was reloaded. Please refresh this page to use the capture features.")
       } else {
         console.error("❌ Failed to send message after category selection:", e)
+        showCaptureError(errorMessage)
       }
     }
   }
@@ -177,23 +196,14 @@ async function handleElementClick(event: MouseEvent) {
     : undefined
 
   try {
-    if (elementData.kind === "image") {
-      await chrome.runtime.sendMessage({
-        type: "SAVE_IMAGE_CAPTURE",
-        data: { ...elementData, category },
-      })
-    } else {
-      await chrome.runtime.sendMessage({
-        type: "SAVE_NON_IMAGE_CAPTURE",
-        data: { ...elementData, category },
-      })
-    }
+    await sendCapture(elementData, category)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     if (errorMessage.includes("Extension context invalidated")) {
       alert("Extension was reloaded. Please refresh this page to use the capture features.")
     } else {
       console.error("❌ Failed to send message to background:", error)
+      showCaptureError(errorMessage)
     }
   }
 

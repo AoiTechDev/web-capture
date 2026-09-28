@@ -1,3 +1,66 @@
+import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
+import type { CropMeta } from "./crop-and-upload"
+
+/**
+ * Ask the background to screenshot the tab and crop it to `r` (viewport
+ * coordinates). Waits two frames first so any overlay just removed is gone
+ * from the pixels.
+ */
+async function requestRegionScreenshot(
+  r: { x: number; y: number; width: number; height: number },
+  meta?: CropMeta
+) {
+  const rect = {
+    ...r,
+    url: window.location.href,
+    dpr: window.devicePixelRatio || 1,
+  }
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect, meta })
+    reportCaptureResult(res)
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e)
+    if (errorMessage.includes("Extension context invalidated")) {
+      alert("Extension was reloaded. Please refresh this page to use the capture features.")
+    } else {
+      console.error("❌ Failed to request region screenshot:", e)
+      showCaptureError(errorMessage)
+    }
+  }
+}
+
+/**
+ * Save a picked element as a screenshot of its bounding box.
+ *
+ * Only what is on screen can be captured, so an element reaching past the
+ * viewport is cropped to its visible part and flagged `clipped`.
+ */
+export async function captureElementScreenshot(
+  element: HTMLElement,
+  meta: Omit<CropMeta, "kind" | "clipped" | "tagName"> = {}
+) {
+  const box = element.getBoundingClientRect()
+  const left = Math.max(0, box.left)
+  const top = Math.max(0, box.top)
+  const right = Math.min(window.innerWidth, box.right)
+  const bottom = Math.min(window.innerHeight, box.bottom)
+  const width = Math.round(right - left)
+  const height = Math.round(bottom - top)
+  if (width < 2 || height < 2) {
+    showCaptureError("The element is not visible on screen.")
+    return
+  }
+  // Sub-pixel slack: a box that ends at 800.4 on an 800px viewport is not clipped.
+  const clipped =
+    box.left < -1 || box.top < -1 || box.right > window.innerWidth + 1 || box.bottom > window.innerHeight + 1
+
+  await requestRegionScreenshot(
+    { x: Math.round(left), y: Math.round(top), width, height },
+    { ...meta, kind: "element", tagName: element.tagName.toLowerCase(), clipped }
+  )
+}
+
 let regionOverlay: HTMLDivElement | null = null
 let selectionBox: HTMLDivElement | null = null
 let isDraggingRegion = false
@@ -66,25 +129,7 @@ export function startScreenshotMode() {
     const ry = Math.max(0, Math.min(Math.round(y), window.innerHeight))
     const rw = Math.max(0, Math.min(Math.round(w), window.innerWidth - rx))
     const rh = Math.max(0, Math.min(Math.round(h), window.innerHeight - ry))
-    const rect = {
-      x: rx,
-      y: ry,
-      width: rw,
-      height: rh,
-      url: window.location.href,
-      dpr: window.devicePixelRatio || 1,
-    }
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-    try {
-      await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect })
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : String(e)
-      if (errorMessage.includes("Extension context invalidated")) {
-        alert("Extension was reloaded. Please refresh this page to use the capture features.")
-      } else {
-        console.error("❌ Failed to request region screenshot:", e)
-      }
-    }
+    await requestRegionScreenshot({ x: rx, y: ry, width: rw, height: rh })
   }
 
   const onMouseUp = async (e: MouseEvent) => {

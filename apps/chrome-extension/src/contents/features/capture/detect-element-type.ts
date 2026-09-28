@@ -22,17 +22,16 @@ export function detectElementType(element: HTMLElement) {
     }
   }
 
-  if (
-    element.classList.contains("code") ||
-    element.closest("pre") ||
-    element.tagName.toLowerCase() === "code"
-  ) {
-    return { kind: "code" as const, content: element.textContent ?? "" }
-  }
-
-  const codeElement = findCodeInElement(element)
+  // Code is no longer saved as a `code` capture: what a designer wants from a
+  // snippet is how it looks, so it is captured as an element screenshot.
+  // Inside a <pre>, the whole block is the useful unit.
+  const codeElement =
+    (element.closest("pre") as HTMLElement | null) ??
+    (element.classList.contains("code") || element.tagName.toLowerCase() === "code"
+      ? element
+      : findCodeInElement(element))
   if (codeElement) {
-    return { kind: "code" as const, content: codeElement.textContent ?? "" }
+    return { kind: "element" as const, tagName: codeElement.tagName.toLowerCase(), target: codeElement }
   }
 
   const text = element.textContent?.trim()
@@ -40,10 +39,11 @@ export function detectElementType(element: HTMLElement) {
     return { kind: "text" as const, content: text }
   }
 
+  // Anything else (an empty box, a canvas, an icon) is captured as it looks.
   return {
     kind: "element" as const,
     tagName: element.tagName.toLowerCase(),
-    content: element.textContent ?? undefined,
+    target: element,
   }
 }
 
