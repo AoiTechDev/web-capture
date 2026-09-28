@@ -15,19 +15,6 @@
         "!.next/cache/**"
       ]
     },
-    "build:firefox": {
-      "dependsOn": [
-        "^build:firefox"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        ".env*"
-      ],
-      "outputs": [
-        ".next/**",
-        "!.next/cache/**"
-      ]
-    },
     "lint": {
       "dependsOn": [
         "^lint"
@@ -37,15 +24,7 @@
       "cache": false,
       "persistent": true
     },
-    "debug:firefox": {
-      "cache": false,
-      "persistent": true
-    },
     "dev": {
-      "cache": false,
-      "persistent": true
-    },
-    "dev:firefoxck": {
       "cache": false,
       "persistent": true
     },
@@ -62,18 +41,11 @@
         "!.next/cache/**"
       ]
     },
-    "package:firefox": {
+    "test": {
       "dependsOn": [
-        "^package:firefox"
+        "^test"
       ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        ".env*"
-      ],
-      "outputs": [
-        ".next/**",
-        "!.next/cache/**"
-      ]
+      "outputs": []
     }
   }
 }

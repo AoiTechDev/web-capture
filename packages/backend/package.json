@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -12,5 +13,11 @@
   "packageManager": "pnpm@10.16.1",
   "dependencies": {
     "convex": "^1.27.3"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "convex-test": "0.0.41",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }
