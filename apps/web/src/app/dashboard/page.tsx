@@ -124,8 +124,14 @@ export default function DashboardPage() {
 
   // Undefined while the count query is in flight; an em dash reads better than
   // a flash of "0" that then corrects itself.
+  // The Screenshots tab also lists picked-element and viewport shots (the
+  // backend merges them into the "screenshot" listing), so count them too.
   const countFor = useCallback(
-    (kind: Kind): string => (counts ? String(counts[kind] ?? 0) : "—"),
+    (kind: Kind): string => {
+      if (!counts) return "—";
+      const kinds: string[] = kind === "screenshot" ? ["screenshot", "element", "viewport"] : [kind];
+      return String(kinds.reduce((sum, k) => sum + (counts[k] ?? 0), 0));
+    },
     [counts]
   );
 

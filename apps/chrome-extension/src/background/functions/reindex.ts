@@ -71,7 +71,11 @@ export const runReindex = async ({
 
         try {
           // Images embed from pixels; text-ish captures from their content.
-          const isVisual = item.kind === "image" || item.kind === "screenshot"
+          const isVisual =
+            item.kind === "image" ||
+            item.kind === "screenshot" ||
+            item.kind === "element" ||
+            item.kind === "viewport"
           const textForEmbedding = [item.content, item.text, item.href]
             .filter(Boolean)
             .join(" ")

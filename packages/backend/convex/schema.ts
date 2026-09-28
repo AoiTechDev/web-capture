@@ -1,6 +1,26 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/**
+ * Where a capture is in the enrichment pipeline. New captures start as
+ * `pending`; captures that predate the pipeline are backfilled to `skipped` so
+ * they are never processed (and never billed) retroactively.
+ */
+export const captureStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("processing"),
+  v.literal("ready"),
+  v.literal("failed"),
+  v.literal("skipped")
+);
+
+/** Fields every capture kind carries, whatever it holds. */
+const commonCaptureFields = {
+  status: v.optional(captureStatusValidator),
+  /** Last enrichment error, when `status` is `failed`. */
+  error: v.optional(v.string()),
+};
+
 export const captureValidator = v.union(
   v.object({
     kind: v.literal("image"),
@@ -21,6 +41,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
   }),
   v.object({
     kind: v.literal("text"),
@@ -35,6 +56,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
   }),
   v.object({
     kind: v.literal("link"),
@@ -51,6 +73,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
   }),
   v.object({
     kind: v.literal("code"),
@@ -65,6 +88,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
   }),
   v.object({
     kind: v.literal("screenshot"),
@@ -87,6 +111,53 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
+  }),
+  // A screenshot of one picked element, cropped to its bounding rect.
+  v.object({
+    kind: v.literal("element"),
+    storageId: v.id("_storage"),
+    width: v.number(),
+    height: v.number(),
+    tagName: v.optional(v.string()),
+    /** True when the element extended past the viewport and was cropped to its visible part. */
+    clipped: v.optional(v.boolean()),
+    alt: v.optional(v.string()),
+    caption: v.optional(v.string()),
+    imageEmbedding: v.optional(v.array(v.float64())),
+    localEmbedding: v.optional(v.array(v.float64())),
+    url: v.string(),
+    timestamp: v.float64(),
+    category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
+  }),
+  // A screenshot of the visible viewport.
+  v.object({
+    kind: v.literal("viewport"),
+    storageId: v.id("_storage"),
+    width: v.number(),
+    height: v.number(),
+    clipped: v.optional(v.boolean()),
+    alt: v.optional(v.string()),
+    caption: v.optional(v.string()),
+    imageEmbedding: v.optional(v.array(v.float64())),
+    localEmbedding: v.optional(v.array(v.float64())),
+    url: v.string(),
+    timestamp: v.float64(),
+    category: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    title: v.optional(v.string()),
+    note: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    domain: v.optional(v.string()),
+    sessionId: v.optional(v.id("sessions")),
+    ...commonCaptureFields,
   })
 );
 
@@ -96,6 +167,9 @@ export default defineSchema({
     .index("by_user", ["userId"]) 
     .index("by_user_category_and_kind", ["userId", "category", "kind"])
     .index("by_user_and_kind", ["userId", "kind"])
+    .index("by_user_session", ["userId", "sessionId"])
+    // Lets a save refuse a storage object another capture already points at.
+    .index("by_storageId", ["storageId"])
     // CLIP ViT-B/32 projection dimension. Scoping the index by userId keeps
     // one user's vectors out of another's result set at the index level.
     .vectorIndex("by_localEmbedding", {
@@ -128,12 +202,12 @@ export default defineSchema({
     .index("by_user_and_canonicalUrl", ["userId", "canonicalUrl"])
     .index("by_user_createdAt", ["userId", "createdAt"]),
   /**
-   * A browsing burst.
+   * A capture session, started and finished explicitly by the user.
    *
-   * Inspiration gathering is bursty: a run of captures minutes apart is almost
-   * always about one thing, and a long gap means a new intent. Grouping by that
-   * gap costs the user nothing, and it records *why* something was saved, which
-   * is the one thing an embedding of the pixels can never recover.
+   * While one is running every capture joins it; with none running captures
+   * stay unfiled. Sessions are never created or ended automatically. They
+   * record *why* something was saved, which is the one thing an embedding of
+   * the pixels can never recover.
    */
   sessions: defineTable({
     userId: v.string(),
@@ -144,9 +218,9 @@ export default defineSchema({
     startedAt: v.float64(),
     lastCaptureAt: v.float64(),
     /**
-     * Set when the user explicitly closes the session. An ended session is
-     * never rejoined, so the next capture starts a fresh one even if it
-     * lands inside the idle window.
+     * Set when the user explicitly finishes the session. An ended session is
+     * never rejoined; later captures stay unfiled until the user starts a new
+     * one.
      */
     endedAt: v.optional(v.float64()),
     itemCount: v.float64(),
