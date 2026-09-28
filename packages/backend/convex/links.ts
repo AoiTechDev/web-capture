@@ -1,7 +1,8 @@
-import { action, mutation, query } from "./_generated/server"
+import { action, internalMutation, mutation, query } from "./_generated/server"
 import { v } from "convex/values"
-import { api } from "./_generated/api"
+import { api, internal } from "./_generated/api"
 import type { Id } from "./_generated/dataModel"
+import { fetchTextLimited } from "./helpers"
 
 function normalizeUrl(raw: string): string {
   try {
@@ -232,13 +233,12 @@ export const enrichLinkPreviewForCapture = action({
     let status: number | undefined
     let html = ""
     try {
-      const resp = await (globalThis as any).fetch(originalUrl, { redirect: "follow" })
+      // Bounded fetch: http(s) only, no private/loopback hosts on any redirect
+      // hop, 8s timeout, first 1 MB of the body.
+      const resp = await fetchTextLimited(originalUrl)
       status = resp.status
-      finalUrl = resp.url || originalUrl
-      const ct = resp.headers.get("content-type") || ""
-      if (ct.includes("text/html")) {
-        html = await resp.text()
-      }
+      finalUrl = resp.finalUrl
+      html = resp.body
     } catch {}
 
     const canonicalUrl = normalizeUrl(finalUrl)
@@ -267,8 +267,9 @@ export const enrichLinkPreviewForCapture = action({
     })
     let previewId: Id<"link_previews">
     if (existing?._id) {
-      await ctx.runMutation((api as any).links.patchPreview, {
+      await ctx.runMutation((internal as any).links.patchPreview, {
         id: existing._id,
+        userId: identity.subject,
         patch: {
           originalUrl,
           siteName: meta.siteName,
@@ -309,9 +310,10 @@ export const enrichLinkPreviewForCapture = action({
       })
     }
 
-    await ctx.runMutation((api as any).links.attachPreviewToCapture, {
+    await ctx.runMutation((internal as any).links.attachPreviewToCapture, {
       captureId,
       previewId,
+      userId: identity.subject,
     })
 
     return { previewId, canonicalUrl }
@@ -362,24 +364,51 @@ export const insertPreview = mutation({
   },
 })
 
-export const patchPreview = mutation({
-  args: { id: v.id("link_previews"), patch: v.any() },
-  handler: async (ctx, { id, patch }) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Unauthorized")
+/**
+ * Refresh a preview's fetched metadata. Internal: only the enrichment action
+ * writes previews, and the patch is limited to metadata fields so it can never
+ * move a preview to another user or rewrite its identity.
+ */
+export const patchPreview = internalMutation({
+  args: {
+    id: v.id("link_previews"),
+    userId: v.string(),
+    patch: v.object({
+      originalUrl: v.optional(v.string()),
+      siteName: v.optional(v.string()),
+      faviconUrl: v.optional(v.string()),
+      title: v.optional(v.string()),
+      description: v.optional(v.string()),
+      imageUrl: v.optional(v.string()),
+      contentType: v.optional(v.string()),
+      lang: v.optional(v.string()),
+      status: v.optional(v.number()),
+      lastCheckedAt: v.optional(v.float64()),
+      updatedAt: v.optional(v.float64()),
+      author: v.optional(v.string()),
+      publishedDate: v.optional(v.string()),
+      keywords: v.optional(v.array(v.string())),
+    }),
+  },
+  handler: async (ctx, { id, userId, patch }) => {
     const doc = await ctx.db.get(id)
-    if (!doc || (doc as any).userId !== identity.subject) throw new Error("Forbidden")
-    await ctx.db.patch(id, patch as any)
+    if (!doc || doc.userId !== userId) throw new Error("Forbidden")
+    await ctx.db.patch(id, patch)
   },
 })
 
-export const attachPreviewToCapture = mutation({
-  args: { captureId: v.id("captures"), previewId: v.id("link_previews") },
-  handler: async (ctx, { captureId, previewId }) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw new Error("Unauthorized")
+/** Internal: called by the enrichment action once the preview is stored. */
+export const attachPreviewToCapture = internalMutation({
+  args: {
+    captureId: v.id("captures"),
+    previewId: v.id("link_previews"),
+    userId: v.string(),
+  },
+  handler: async (ctx, { captureId, previewId, userId }) => {
     const cap = await ctx.db.get(captureId)
-    if (!cap || (cap as any).userId !== identity.subject) throw new Error("Forbidden")
+    if (!cap || cap.userId !== userId || cap.kind !== "link") throw new Error("Forbidden")
+    const preview = await ctx.db.get(previewId)
+    if (!preview || preview.userId !== userId) throw new Error("Forbidden")
     await ctx.db.patch(captureId, { linkPreviewId: previewId })
   },
 })

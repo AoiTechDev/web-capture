@@ -1,4 +1,4 @@
-import { action } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 
@@ -7,7 +7,10 @@ declare const process: any;
 
 const OPENAI_API_URL = "https://api.openai.com/v1";
 
-export const generateImageCaptionAndEmbedding = action({
+// Both actions are internal: no client calls them, and as public actions any
+// signed-in user could spend the project's OpenAI quota. Kept for the
+// server-side enrichment pipeline.
+export const generateImageCaptionAndEmbedding = internalAction({
   args: {
     captureId: v.id("captures"),
   },
@@ -23,7 +26,7 @@ export const generateImageCaptionAndEmbedding = action({
     const capture = await ctx.runQuery(api.captures.getCaptureById, { id: captureId });
     if (!capture) throw new Error("Capture not found");
     const kind = (capture as any).kind;
-    if (kind !== "image" && kind !== "screenshot") {
+    if (kind !== "image" && kind !== "screenshot" && kind !== "element" && kind !== "viewport") {
       throw new Error("Only image and screenshot captures are supported");
     }
 
@@ -115,7 +118,7 @@ export const generateImageCaptionAndEmbedding = action({
   },
 });
 
-export const embedQuery = action({
+export const embedQuery = internalAction({
   args: { q: v.string() },
   handler: async (ctx, { q }) => {
     const identity = await ctx.auth.getUserIdentity();

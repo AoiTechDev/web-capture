@@ -1,4 +1,4 @@
-import { action, query } from "./_generated/server";
+import { internalAction, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 
@@ -49,7 +49,8 @@ export const searchCapturesFallback = query({
         id: d._id,
         kind: d.kind as string,
         imageUrl:
-          (d.kind === "image" || d.kind === "screenshot") && d.storageId
+          (d.kind === "image" || d.kind === "screenshot" || d.kind === "element" || d.kind === "viewport") &&
+          d.storageId
             ? await ctx.storage.getUrl(d.storageId)
             : null,
         pageUrl: d.url ?? null,
@@ -71,7 +72,11 @@ export const searchCapturesFallback = query({
   },
 });
 
-export const searchCapturesSemantic = action({
+/**
+ * OpenAI-backed semantic search. Internal: no client calls it, and a public
+ * action would let any signed-in user spend the project's OpenAI quota.
+ */
+export const searchCapturesSemantic = internalAction({
   args: { q: v.string(), limit: v.optional(v.number()), minScore: v.optional(v.number()) },
   handler: async (ctx, { q, limit, minScore: argMinScore }): Promise<{ results: any[] }> => {
     const identity = await ctx.auth.getUserIdentity();

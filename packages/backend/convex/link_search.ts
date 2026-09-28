@@ -27,17 +27,20 @@ export const searchLinks = query({
     const previews = await Promise.all(
       previewIds.map((id) => ctx.db.get(id))
     )
+    // Only the caller's own previews; a capture pointing at someone else's is
+    // treated as having none.
     const previewMap = new Map(
       previews
-        .filter((p): p is any => p !== null && (p as any).domain !== undefined)
+        .filter(
+          (p): p is any =>
+            p !== null && (p as any).userId === identity.subject && (p as any).domain !== undefined
+        )
         .map((p: any) => [p._id, p])
     )
 
-    console.log('[searchLinks] Query:', lc, 'Link captures found:', linkCaptures.length)
 
     
     const terms = lc.split(/\s+/).filter(Boolean)
-    console.log('[searchLinks] Search terms:', terms)
     
     const scored = linkCaptures
       .map((capture: any) => {
@@ -69,7 +72,6 @@ export const searchLinks = query({
       .sort((a, b) => b.score - a.score)
       .slice(0, take)
 
-    console.log('[searchLinks] Scored results:', scored.length)
 
     
     const results = scored.map(({ capture, preview }) => ({
@@ -89,7 +91,6 @@ export const searchLinks = query({
       timestamp: capture.timestamp,
     }))
 
-    console.log('[searchLinks] Results:', results)
 
     return { results } as const
   },
