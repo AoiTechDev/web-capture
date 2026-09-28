@@ -29,17 +29,11 @@ console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 type ClerkClient = Awaited<ReturnType<typeof createClerkClient>>;
 
-// One Clerk client for the worker's lifetime. Creating it loads the client
-// from Clerk's API, which is far too slow to repeat on every message.
+// A signed-in Clerk client is kept for the worker's lifetime: creating one
+// loads the client from Clerk's API, too slow to repeat on every message.
 let clerkPromise: Promise<ClerkClient> | null = null;
-let clerkLoadedAt = 0;
-
-// A signed-out instance never learns about a sign-in made in the popup, so it
-// is reloaded - but at most this often, not on every message.
-const SIGNED_OUT_RELOAD_MS = 5_000;
 
 function loadClerk(): Promise<ClerkClient> {
-  clerkLoadedAt = Date.now();
   const p = createClerkClient({
     publishableKey: publishableKey!,
     syncHost: process.env.PLASMO_PUBLIC_CLERK_SYNC_HOST
@@ -55,24 +49,31 @@ function loadClerk(): Promise<ClerkClient> {
 async function getClerk(): Promise<ClerkClient> {
   if (!clerkPromise) return loadClerk();
   const clerk = await clerkPromise;
-  if (!clerk.session && Date.now() - clerkLoadedAt > SIGNED_OUT_RELOAD_MS) {
-    return loadClerk();
-  }
-  return clerk;
+  // A signed-out client never learns about a sign-in made in the popup or on
+  // the web app, so it is only reused while it has a session.
+  return clerk.session ? clerk : loadClerk();
+}
+
+async function tokenFrom(clerk: ClerkClient, forceRefresh: boolean): Promise<string | null> {
+  if (!clerk.session) return null;
+  return (await clerk.session.getToken({ template: 'convex', skipCache: forceRefresh })) ?? null;
 }
 
 /** A Convex JWT for the signed-in user, or null. Never leaves the worker. */
 async function getToken(forceRefresh = false): Promise<string | null> {
   try {
-    const clerk = await getClerk();
-    if (!clerk.session) return null;
-    const token = await clerk.session.getToken({ template: 'convex', skipCache: forceRefresh });
-    return token ?? null;
+    return await tokenFrom(await getClerk(), forceRefresh);
   } catch (e) {
-    // Session revoked or network failure: start from a fresh client next time.
-    console.warn('[Service Worker]: Could not get a session token:', e);
-    clerkPromise = null;
-    return null;
+    // A cached session can go stale (revoked, expired while the worker slept):
+    // retry once on a freshly loaded client before reporting signed out.
+    console.warn('[Service Worker]: Session token failed, reloading Clerk:', e);
+    try {
+      return await tokenFrom(await loadClerk(), true);
+    } catch (e2) {
+      console.warn('[Service Worker]: Could not get a session token:', e2);
+      clerkPromise = null;
+      return null;
+    }
   }
 }
 
@@ -130,7 +131,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Check authentication status. Only a boolean: the token itself is
         // never sent to a content script, where the page could get at it.
         if (msg.type === 'CHECK_AUTH') {
-          sendResponse({ signedIn });
+          // isAuthenticated: the field name content scripts from older builds
+          // read, so tabs opened before an update don't report signed out.
+          sendResponse({ signedIn, isAuthenticated: signedIn });
           return;
         }
 
