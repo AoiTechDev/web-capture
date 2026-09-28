@@ -9,11 +9,36 @@ import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import { useCachedQuery } from "@/hooks/useStableQuery";
 import { MasonrySkeleton, ListSkeleton } from "@/components/Skeletons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Plus, Images, Camera, Link, FileText } from "lucide-react";
+import { Search, Images, Camera, Link, FileText } from "lucide-react";
 import { useQuery } from "convex/react";
 
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
+
+/** Row shape returned by `searchCapturesFallback` and consumed by the layouts. */
+type SearchRow = {
+  id: string;
+  imageUrl: string | null;
+  pageUrl: string | null;
+  width: number | null;
+  height: number | null;
+  alt: string | null;
+  title: string | null;
+  tags: string[];
+  storageId: string | null;
+};
+
+/** What the layout components accept once a row has been normalised. */
+type DisplayItem = {
+  _id: string;
+  url?: string;
+  pageUrl?: string;
+  width: number;
+  height: number;
+  alt: string;
+  tags: string[];
+  storageId?: string;
+};
 
 /**
  * The app is empty until the extension is installed, so this doubles as the
@@ -58,10 +83,10 @@ export default function DashboardPage() {
   const { selected } = useSelectedCategoryStore();
   const [selectedKind, setSelectedKind] = useState<Kind>("image");
   const [q, setQ] = useState("");
-  const [searchItems, setSearchItems] = useState<any[] | null>(null);
+  const [searchItems, setSearchItems] = useState<DisplayItem[] | null>(null);
   const fallback = useQuery(api.search.searchCapturesFallback, { q: q.trim() || "__NOOP__", limit: 60 });
 
-  const { data: captures, isLoading: capturesLoading } = useCachedQuery<any[]>(
+  const { data: captures, isLoading: capturesLoading } = useCachedQuery(
     api.captures.byCategoryAndKind,
     { category: selected || "unsorted", kind: selectedKind }
   );
@@ -95,10 +120,7 @@ export default function DashboardPage() {
     []
   );
 
-  const { data: counts } = useCachedQuery<Record<string, number>>(
-    api.captures.countsByKind,
-    {}
-  );
+  const { data: counts } = useCachedQuery(api.captures.countsByKind, {});
 
   // Undefined while the count query is in flight; an em dash reads better than
   // a flash of "0" that then corrects itself.
@@ -124,18 +146,19 @@ export default function DashboardPage() {
       setSearchItems(null);
       return;
     }
-    if (!fallback || !Array.isArray((fallback as any).results)) return;
+    const rows = (fallback as { results?: SearchRow[] } | undefined)?.results;
+    if (!Array.isArray(rows)) return;
 
     setSearchItems(
-      (fallback as any).results.map((r: any) => ({
+      rows.map((r: SearchRow) => ({
         _id: r.id,
-        url: r.imageUrl,
-        pageUrl: r.pageUrl,
+        url: r.imageUrl ?? undefined,
+        pageUrl: r.pageUrl ?? undefined,
         width: r.width || 600,
         height: r.height || 400,
         alt: r.alt || r.title || "",
         tags: r.tags || [],
-        storageId: r.storageId,
+        storageId: r.storageId ?? undefined,
       }))
     );
   }, [q, fallback]);
@@ -212,7 +235,9 @@ export default function DashboardPage() {
         ) : (
           <>
             {(selectedKind === "image" || selectedKind === "screenshot") && (
-              <MasonryLayout items={(q && searchItems ? searchItems : captures) as any} />
+              <MasonryLayout
+                items={(q && searchItems ? searchItems : captures) as DisplayItem[]}
+              />
             )}
             {selectedKind === "text" && (
               <TextWrapLayout
@@ -249,7 +274,8 @@ export default function DashboardPage() {
         )}
       </div>
 
-  
+      <MaximizedImage />
+      <MaximizedText />
     </main>
   );
 }

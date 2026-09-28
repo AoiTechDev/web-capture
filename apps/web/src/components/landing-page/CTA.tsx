@@ -9,7 +9,7 @@ export default function CTA() {
           Internet?
         </h2>
         <p className="text-base sm:text-xl text-[var(--text-muted)] mb-8 max-w-2xl mx-auto">
-          Join thousands of developers, designers, and researchers who've
+          Join thousands of developers, designers, and researchers who&apos;ve
           transformed how they capture and organize web content.
         </p>
 
@@ -21,7 +21,7 @@ export default function CTA() {
           >
             <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm-.84 4.67h1.68v8.36h-1.68V4.67zM12 18.155c-.635 0-1.155-.519-1.155-1.155 0-.635.52-1.155 1.155-1.155.636 0 1.155.52 1.155 1.155 0 .636-.519 1.155-1.155 1.155z" />
           </svg>
-          Add to Chrome - It's Free
+          Add to Chrome - It&apos;s Free
         </button>
 
         <div className="flex items-center justify-center space-x-2 text-yellow-400">

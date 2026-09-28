@@ -1,6 +1,10 @@
 import { useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
-import type { FunctionReference } from "convex/server";
+import type {
+  FunctionArgs,
+  FunctionReference,
+  FunctionReturnType,
+} from "convex/server";
 
 /**
  * Query results cached across component lifetimes.
@@ -18,17 +22,26 @@ const cache = new Map<string, unknown>();
 /** Bound on retained entries; evicts oldest-inserted first. */
 const MAX_ENTRIES = 200;
 
-function cacheKey(name: any, args: unknown): string {
-  // `api` is Convex's anyApi proxy: every property access returns another
-  // proxy, so probing for `_path` yields an object rather than undefined and
-  // stringifying it throws. getFunctionName is the supported accessor.
-  let path: string;
+/**
+ * Cache key for a query, or null when the query cannot be identified.
+ *
+ * `api` is Convex's anyApi proxy: every property access returns another proxy,
+ * so probing for `_path` yields an object rather than undefined and
+ * stringifying it throws. getFunctionName is the supported accessor.
+ *
+ * Returns null rather than a shared placeholder on failure - two unidentifiable
+ * queries sharing one key would serve each other's results, which is far worse
+ * than not caching.
+ */
+function cacheKey(
+  name: FunctionReference<"query">,
+  args: unknown
+): string | null {
   try {
-    path = getFunctionName(name);
+    return `${getFunctionName(name)}:${JSON.stringify(args ?? {})}`;
   } catch {
-    path = "unknown";
+    return null;
   }
-  return `${path}:${JSON.stringify(args ?? {})}`;
 }
 
 function remember(key: string, value: unknown) {
@@ -58,16 +71,19 @@ export type CachedQueryResult<T> = {
  * states look identical but mean opposite things, and conflating them is what
  * makes an empty state flash before content arrives.
  */
-export function useCachedQuery<T>(
-  name: FunctionReference<"query", "public", any, T>,
-  args: any
-): CachedQueryResult<T> {
+export function useCachedQuery<Query extends FunctionReference<"query">>(
+  name: Query,
+  args: FunctionArgs<Query>
+): CachedQueryResult<FunctionReturnType<Query>> {
+  type Result = FunctionReturnType<Query>;
+
   const key = cacheKey(name, args);
-  const live = useQuery(name as any, args as any) as T | undefined;
+  const live = useQuery(name, args) as Result | undefined;
 
-  if (live !== undefined) remember(key, live);
+  if (key !== null && live !== undefined) remember(key, live);
 
-  const data = live !== undefined ? live : (cache.get(key) as T | undefined);
+  const cached = key !== null ? (cache.get(key) as Result | undefined) : undefined;
+  const data = live !== undefined ? live : cached;
 
   return {
     data,
@@ -81,11 +97,11 @@ export function useCachedQuery<T>(
  * apart from a genuinely empty result. Use `useCachedQuery` and branch on
  * `isLoading`.
  */
-export function useStableQuery<T>(
-  name: FunctionReference<"query", "public", any, T>,
-  args: any,
-  defaultValue: T
-): T {
-  const { data } = useCachedQuery<T>(name, args);
+export function useStableQuery<Query extends FunctionReference<"query">>(
+  name: Query,
+  args: FunctionArgs<Query>,
+  defaultValue: FunctionReturnType<Query>
+): FunctionReturnType<Query> {
+  const { data } = useCachedQuery(name, args);
   return data ?? defaultValue;
 }

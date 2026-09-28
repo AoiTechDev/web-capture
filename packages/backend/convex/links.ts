@@ -1,6 +1,7 @@
 import { action, mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 import { api } from "./_generated/api"
+import type { Id } from "./_generated/dataModel"
 
 function normalizeUrl(raw: string): string {
   try {
@@ -206,9 +207,19 @@ function extractMeta(html: string): {
   }
 }
 
+/**
+ * The handler's return type is annotated explicitly because it calls back into
+ * `api`, which includes this module - without it TypeScript cannot infer the
+ * type without consulting itself, and every local in the body degrades to an
+ * implicit `any` (TS7022/TS7023). That failed `next build`, which typechecks
+ * the whole workspace.
+ */
 export const enrichLinkPreviewForCapture = action({
   args: { captureId: v.id("captures") },
-  handler: async (ctx, { captureId }) => {
+  handler: async (
+    ctx,
+    { captureId }
+  ): Promise<{ previewId: Id<"link_previews">; canonicalUrl: string } | null> => {
     const identity = await ctx.auth.getUserIdentity()
     if (!identity) throw new Error("Unauthorized")
     const capture = await ctx.runQuery(api.captures.getCaptureById as any, { id: captureId })
@@ -254,7 +265,7 @@ export const enrichLinkPreviewForCapture = action({
     const existing = await ctx.runQuery((api as any).links.getByUserAndCanonicalUrl, {
       canonicalUrl,
     })
-    let previewId
+    let previewId: Id<"link_previews">
     if (existing?._id) {
       await ctx.runMutation((api as any).links.patchPreview, {
         id: existing._id,

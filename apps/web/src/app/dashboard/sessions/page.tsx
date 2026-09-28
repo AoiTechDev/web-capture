@@ -113,7 +113,7 @@ const SessionTitle = ({ session }: { session: SessionCard }) => {
 export default function SessionsPage() {
   // `listSessions` returns `as const`, so its inferred type is readonly; the
   // rows are re-typed as SessionCard below.
-  const { data, isLoading } = useCachedQuery<any>(api.sessions.listSessions, {
+  const { data, isLoading } = useCachedQuery(api.sessions.listSessions, {
     limit: 50,
     thumbsPerSession: 5,
   });

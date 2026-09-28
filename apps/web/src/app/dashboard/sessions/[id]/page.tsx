@@ -9,7 +9,6 @@ import MasonryLayout from "@/components/MansoryLayout";
 import MaximizedImage from "@/components/MaximizedImage";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 import { Id } from "../../../../../../../packages/backend/convex/_generated/dataModel";
-import { isUint16Array } from "util/types";
 import LinkList from "@/components/LinkList";
 import TextWrapLayout from "@/components/TextWrapLayout";
 
@@ -36,7 +35,7 @@ export default function SessionDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { data: session, isLoading } = useCachedQuery<any>(api.sessions.getSession, {
+  const { data: session, isLoading } = useCachedQuery(api.sessions.getSession, {
     id: id as Id<"sessions">,
   });
 
