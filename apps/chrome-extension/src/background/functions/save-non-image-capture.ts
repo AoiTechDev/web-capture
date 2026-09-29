@@ -4,7 +4,7 @@ import { api } from "../../../../../packages/backend/convex/_generated/api";
 // evaluation, so lazy imports inside a handler fail at message time.
 import { embedText } from "./local-embeddings";
 import { deriveMetadata, mergeTags } from "./derive-metadata";
-import { broadcastSessionState } from "./session-broadcast";
+import { assignToSession } from "./finish-image-capture";
 
 /**
  * Returns a representative text string for a capture, used as input to
@@ -25,13 +25,16 @@ function getEmbeddableText(data: any): string | null {
   }
 }
 
-/** Resolves once the capture is stored; throws if it could not be saved. */
+/**
+ * Resolves once the capture is stored, with the session it joined; throws if
+ * it could not be saved.
+ */
 export const saveNonImageCapture = async ({
     captureData, convex
 }: {
     captureData: any;
     convex: ConvexClient;
-}): Promise<void> => {
+}): Promise<{ sessionName: string | null }> => {
 
       if (Array.isArray((captureData as any).tags)) {
         try {
@@ -71,10 +74,12 @@ export const saveNonImageCapture = async ({
 
       // Same grouping as the visual paths: text and links saved while the user
       // has a session running join that session.
+      let sessionName: string | null = null;
       if (insertedId) {
+        const derived = deriveMetadata({ url: captureData?.url });
+        const userTags: string[] | undefined = Array.isArray(captureData?.tags) ? captureData.tags : undefined;
         try {
-          const derived = deriveMetadata({ url: captureData?.url });
-          const allTags = mergeTags((captureData as any)?.tags, derived.tags);
+          const allTags = mergeTags(userTags, derived.tags);
           if (allTags.length || derived.domain) {
             await convex.mutation((api as any).local_ai.applyAutoMetadata, {
               id: insertedId,
@@ -82,14 +87,10 @@ export const saveNonImageCapture = async ({
               domain: derived.domain ?? undefined,
             });
           }
-          const res = await convex.mutation((api as any).sessions.assignCapture, {
-            captureId: insertedId,
-            domain: derived.domain ?? undefined,
-            tags: allTags,
-          });
-          if (res?.assigned) void broadcastSessionState(convex);
         } catch (e) {
-          console.warn('[save-non-image] Failed to assign session:', e);
+          console.warn('[save-non-image] Failed to apply metadata:', e);
         }
+        sessionName = await assignToSession(convex, insertedId, derived, userTags, 'save-non-image');
       }
+      return { sessionName };
 }

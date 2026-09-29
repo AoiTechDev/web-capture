@@ -1,24 +1,43 @@
-import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
-import type { CropMeta } from "./crop-and-upload"
+import { dismissNotifications, reportCaptureSaved, showCaptureError } from "../auth/auth-notification"
+import { collectDesignDna, type DesignDNA } from "./design-dna"
+
+/** How the background should save the shot; defaults to a plain region screenshot. */
+export type CaptureMeta = {
+  kind?: "screenshot" | "element" | "viewport"
+  tagName?: string
+  clipped?: boolean
+  category?: string
+  tags?: string[]
+  /** element only */
+  designDna?: DesignDNA
+}
 
 /**
  * Ask the background to screenshot the tab and crop it to `r` (viewport
- * coordinates). Waits two frames first so any overlay just removed is gone
- * from the pixels.
+ * coordinates). The background crops, thumbnails and uploads, so only the
+ * rectangle and metadata cross the message boundary, never image data.
+ *
+ * Waits two frames first so any overlay just removed is gone from the pixels.
  */
 async function requestRegionScreenshot(
   r: { x: number; y: number; width: number; height: number },
-  meta?: CropMeta
+  meta?: CaptureMeta
 ) {
   const rect = {
     ...r,
     url: window.location.href,
     dpr: window.devicePixelRatio || 1,
   }
+  // A "Saved" toast from the previous capture would otherwise be in this shot.
+  dismissNotifications()
   await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
   try {
-    const res = await chrome.runtime.sendMessage({ type: "SCREENSHOT_ELEMENT", rect, meta })
-    reportCaptureResult(res)
+    const res = await chrome.runtime.sendMessage({
+      type: "SCREENSHOT_ELEMENT",
+      rect,
+      meta,
+    })
+    reportCaptureSaved(res)
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e)
     if (errorMessage.includes("Extension context invalidated")) {
@@ -31,22 +50,23 @@ async function requestRegionScreenshot(
 }
 
 /**
- * Save a picked element as a screenshot of its bounding box.
+ * Save a picked element as a screenshot of its bounding box, with its Design
+ * DNA read from computed styles just before the shot.
  *
  * Only what is on screen can be captured, so an element reaching past the
  * viewport is cropped to its visible part and flagged `clipped`.
  */
 export async function captureElementScreenshot(
   element: HTMLElement,
-  meta: Omit<CropMeta, "kind" | "clipped" | "tagName"> = {}
+  meta: Omit<CaptureMeta, "kind" | "clipped" | "tagName" | "designDna"> = {}
 ) {
   const box = element.getBoundingClientRect()
   const left = Math.max(0, box.left)
   const top = Math.max(0, box.top)
   const right = Math.min(window.innerWidth, box.right)
   const bottom = Math.min(window.innerHeight, box.bottom)
-  const width = Math.round(right - left)
-  const height = Math.round(bottom - top)
+  const width = right - left
+  const height = bottom - top
   if (width < 2 || height < 2) {
     showCaptureError("The element is not visible on screen.")
     return
@@ -55,9 +75,29 @@ export async function captureElementScreenshot(
   const clipped =
     box.left < -1 || box.top < -1 || box.right > window.innerWidth + 1 || box.bottom > window.innerHeight + 1
 
+  // A DNA failure must not cost the user the screenshot.
+  let designDna: DesignDNA | undefined
+  try {
+    designDna = collectDesignDna(element, {
+      clipped,
+      viewport: { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight },
+    })
+  } catch (e) {
+    console.warn("Design DNA collection failed:", e)
+  }
+
   await requestRegionScreenshot(
-    { x: Math.round(left), y: Math.round(top), width, height },
-    { ...meta, kind: "element", tagName: element.tagName.toLowerCase(), clipped }
+    // Unrounded: computeCropBox rounds each edge once, in device pixels.
+    { x: left, y: top, width, height },
+    { ...meta, kind: "element", tagName: element.tagName.toLowerCase(), clipped, designDna }
+  )
+}
+
+/** Save everything currently visible in the tab (kind `viewport`, no DNA). */
+export async function captureViewport() {
+  await requestRegionScreenshot(
+    { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
+    { kind: "viewport", clipped: false }
   )
 }
 

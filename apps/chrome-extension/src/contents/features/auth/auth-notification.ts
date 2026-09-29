@@ -1,5 +1,12 @@
+const ALERT_ICON = 'M10 0C4.48 0 0 4.48 0 10C0 15.52 4.48 20 10 20C15.52 20 20 15.52 20 10C20 4.48 15.52 0 10 0ZM9 15V13H11V15H9ZM11 11H9V5H11V11Z'
+const CHECK_ICON = 'M10 0C4.48 0 0 4.48 0 10C0 15.52 4.48 20 10 20C15.52 20 20 15.52 20 10C20 4.48 15.52 0 10 0ZM8 15L3 10L4.41 8.59L8 12.17L15.59 4.58L17 6L8 15Z'
+
 /** A short-lived toast in the page's top-right corner. */
-export function showNotification(titleText: string, messageText: string) {
+export function showNotification(
+  titleText: string,
+  messageText: string,
+  { icon = 'alert', durationMs = 4000 }: { icon?: 'alert' | 'check'; durationMs?: number } = {}
+) {
   const notification = document.createElement('div')
   notification.className = 'auth-notification'
 
@@ -12,7 +19,7 @@ export function showNotification(titleText: string, messageText: string) {
   svg.setAttribute('viewBox', '0 0 20 20')
   svg.setAttribute('fill', 'none')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', 'M10 0C4.48 0 0 4.48 0 10C0 15.52 4.48 20 10 20C15.52 20 20 15.52 20 10C20 4.48 15.52 0 10 0ZM9 15V13H11V15H9ZM11 11H9V5H11V11Z')
+  path.setAttribute('d', icon === 'check' ? CHECK_ICON : ALERT_ICON)
   path.setAttribute('fill', 'white')
   svg.appendChild(path)
 
@@ -25,7 +32,7 @@ export function showNotification(titleText: string, messageText: string) {
   message.textContent = messageText
 
   textContainer.appendChild(title)
-  textContainer.appendChild(message)
+  if (messageText) textContainer.appendChild(message)
   content.appendChild(svg)
   content.appendChild(textContainer)
   notification.appendChild(content)
@@ -37,7 +44,12 @@ export function showNotification(titleText: string, messageText: string) {
     setTimeout(() => {
       notification.remove()
     }, 300)
-  }, 4000)
+  }, durationMs)
+}
+
+/** Remove any toast still on screen, e.g. so it isn't in the next screenshot. */
+export function dismissNotifications() {
+  document.querySelectorAll('.auth-notification').forEach((n) => n.remove())
 }
 
 export function showAuthNotification() {
@@ -57,4 +69,18 @@ export function reportCaptureResult(res: { ok?: boolean; error?: string } | unde
   if (res?.ok) return true
   showCaptureError(res?.error)
   return false
+}
+
+/**
+ * Like reportCaptureResult, but also confirms a successful save and where it
+ * went. The background answers with `sessionName`, null when no session is
+ * running.
+ */
+export function reportCaptureSaved(
+  res: { ok?: boolean; error?: string; sessionName?: string | null } | undefined
+): boolean {
+  if (!reportCaptureResult(res)) return false
+  const title = res?.sessionName ? `Saved to session: ${res.sessionName}` : 'Saved (no session)'
+  showNotification(title, '', { icon: 'check', durationMs: 2500 })
+  return true
 }

@@ -4,8 +4,6 @@ import { api } from "../../../../packages/backend/convex/_generated/api";
 import { saveNonImageCapture } from '~background/functions/save-non-image-capture';
 import { saveImageCapture } from '~background/functions/save-image-capture';
 import { screenshotElement } from '~background/functions/screenshot-element';
-import { uploadCroppedImage } from '~background/functions/upload-cropped-image';
-import { uploadCroppedDataurl } from '~background/functions/upload-cropped-dataurl';
 // Static: reindex is reached from a message handler, past the point where an
 // MV3 worker is still allowed to importScripts().
 import { runReindex, isReindexing } from '~background/functions/reindex';
@@ -96,13 +94,14 @@ async function syncAuth(): Promise<boolean> {
   return signedIn;
 }
 
-/** Messages that save something; each answers { ok } once the save finished. */
+/**
+ * Messages that save something; each answers { ok, sessionName } once the
+ * capture is stored, so the page can say where it went.
+ */
 const CAPTURE_MESSAGES = new Set([
   'SAVE_NON_IMAGE_CAPTURE',
   'SAVE_IMAGE_CAPTURE',
   'SCREENSHOT_ELEMENT',
-  'UPLOAD_CROPPED_IMAGE',
-  'UPLOAD_CROPPED_DATAURL',
 ]);
 
 function errorMessage(e: unknown): string {
@@ -145,8 +144,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
           try {
+            let saved: { sessionName: string | null };
             if (msg.type === 'SAVE_NON_IMAGE_CAPTURE') {
-              await saveNonImageCapture({
+              saved = await saveNonImageCapture({
                 captureData: {
                   kind: msg.data.kind,
                   ...msg.data,
@@ -156,15 +156,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 convex,
               });
             } else if (msg.type === 'SAVE_IMAGE_CAPTURE') {
-              await saveImageCapture({ msg, convex });
-            } else if (msg.type === 'SCREENSHOT_ELEMENT') {
-              await screenshotElement({ msg, sender });
-            } else if (msg.type === 'UPLOAD_CROPPED_IMAGE') {
-              await uploadCroppedImage({ msg, convex });
+              saved = await saveImageCapture({ msg, convex });
             } else {
-              await uploadCroppedDataurl({ msg, convex });
+              saved = await screenshotElement({ msg, sender, convex });
             }
-            sendResponse({ ok: true });
+            sendResponse({ ok: true, sessionName: saved.sessionName });
           } catch (e) {
             console.error(`[Service Worker]: ${msg.type} failed:`, e);
             sendResponse({ ok: false, error: errorMessage(e) });

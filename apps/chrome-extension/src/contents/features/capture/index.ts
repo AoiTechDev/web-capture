@@ -1,6 +1,5 @@
 export { toggleSelectionMode, isInSelectionMode, exitSelectionMode } from './element-capture'
-export { startScreenshotMode, isInScreenshotMode, exitScreenshotMode } from './screenshot-capture'
-export { cropAndUpload } from './crop-and-upload'
+export { startScreenshotMode, isInScreenshotMode, exitScreenshotMode, captureViewport } from './screenshot-capture'
 export { captureElement } from './capture-element'
 export { detectElementType } from './detect-element-type'
 

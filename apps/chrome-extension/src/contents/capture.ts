@@ -4,7 +4,7 @@ import { showAuthNotification } from "./features/auth/auth-notification"
 import { checkAuth } from "./features/auth/check-auth"
 import { toggleSearchOverlay, closeSearchOverlay, isSearchOverlayOpen } from "./features/search/search-overlay"
 import { cleanup, toggleSelectionMode, startScreenshotMode, exitAllModes } from "./features/capture"
-import { cropAndUpload } from "./features/capture/crop-and-upload"
+import { captureViewport } from "./features/capture/screenshot-capture"
 import { captureSelectedText } from "./features/capture/selected-text-capture"
 import { captureCurrentPageLink } from "./features/capture/capture-link"
 import { showIndicator, hideIndicator } from "./features/session/session-indicator"
@@ -192,7 +192,7 @@ document.addEventListener(
   true
 )
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message?.type === "START_SCREENSHOT_MODE") {
     void (async () => {
@@ -205,7 +205,17 @@ chrome.runtime.onMessage.addListener((message) => {
       activeMode = "screenshot"
     })()
   }
-  if (message?.type === "CROP_AND_UPLOAD") {
-    void cropAndUpload(message as Parameters<typeof cropAndUpload>[0])
+  // From the popup's "Save visible page" button.
+  if (message?.type === "CAPTURE_VIEWPORT") {
+    // Acknowledge at once so the popup can close; the page reports the result.
+    sendResponse({ accepted: true })
+    void (async () => {
+      const isAuthenticated = await checkAuth()
+      if (!isAuthenticated) {
+        showAuthNotification()
+        return
+      }
+      await captureViewport()
+    })()
   }
 })
