@@ -77,7 +77,7 @@ async function sendToOffscreen(
 /**
  * Embed a text string using CLIP's text encoder (runs in offscreen doc).
  * Works for text captures, code, link descriptions, and search queries.
- * Returns a 512-dim Float64 array (same space as embedImageFromUrl).
+ * Returns a LOCAL_EMBEDDING_DIM vector (same space as embedImageFromUrl).
  */
 export async function embedText(text: string): Promise<number[]> {
   const resp = await sendToOffscreen({ type: "EMBED_TEXT", text })
@@ -87,7 +87,7 @@ export async function embedText(text: string): Promise<number[]> {
 
 /**
  * Embed an image from a URL using CLIP's vision encoder (runs in offscreen doc).
- * Returns a 512-dim Float64 array (same space as embedText).
+ * Returns a LOCAL_EMBEDDING_DIM vector (same space as embedText).
  */
 export async function embedImageFromUrl(imageUrl: string): Promise<number[]> {
   const resp = await sendToOffscreen({ type: "EMBED_IMAGE_URL", url: imageUrl })

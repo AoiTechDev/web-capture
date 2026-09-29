@@ -4,7 +4,7 @@ import { api } from "../../../../../packages/backend/convex/_generated/api";
 // during initial evaluation, and Parcel compiles runtime import() to exactly
 // that. A dynamic import here fails with a NetworkError at message time.
 import { deriveMetadata } from "./derive-metadata";
-import { assignToSession, enrichImageCapture } from "./finish-image-capture";
+import { applyDerivedMetadata, assignToSession } from "./finish-image-capture";
 import { assertImageSize, deriveImageExtras, uploadBlob } from "./image-processing";
 
 /**
@@ -58,8 +58,8 @@ export const saveImageCapture = async ({
     // react at capture time rather than once inference finishes.
     const sessionName = await assignToSession(convex, docId, derived, tags, 'save-image');
 
-    // Local CLIP embedding (no API call) and auto-tags. Not awaited: it takes
-    // seconds and the capture is already saved.
-    void enrichImageCapture(convex, { docId, image: msg.data.src, derived, userTags: tags, logTag: 'save-image' });
+    // Domain and shape tags now; the embedding and AI labels come from the
+    // processing queue, which the caller kicks once this resolves.
+    void applyDerivedMetadata(convex, { docId, derived, userTags: tags, logTag: 'save-image' });
     return { sessionName };
 }

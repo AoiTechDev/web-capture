@@ -2,7 +2,7 @@ import type { ConvexClient } from "convex/browser";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 // Static imports: see the note in save-image-capture.ts (MV3 importScripts).
 import { deriveMetadata } from "./derive-metadata";
-import { assignToSession, enrichImageCapture } from "./finish-image-capture";
+import { applyDerivedMetadata, assignToSession } from "./finish-image-capture";
 import {
     assertImageSize,
     computeCropBox,
@@ -23,8 +23,8 @@ function captureKind(kind: unknown): 'screenshot' | 'element' | 'viewport' {
  * All image work happens here, so the content script only sends a rectangle
  * and metadata (`msg.meta`: kind, tagName, clipped, category, tags and, for
  * elements, the Design DNA). Resolves once the capture is stored and filed,
- * with the session it joined; embedding and auto-tags continue afterwards so
- * the page can confirm the save straight away.
+ * with the session it joined; the processing queue embeds and tags it
+ * afterwards, so the page can confirm the save straight away.
  */
 export const screenshotElement = async ({
     msg, sender, convex
@@ -100,9 +100,9 @@ export const screenshotElement = async ({
         const derived = deriveMetadata({ url: pageUrl, width, height });
         const sessionName = await assignToSession(convex, docId, derived, tags, 'screenshot');
 
-        // Not awaited: the model takes seconds and the user already has the
-        // confirmation. Failures are logged and left for a re-index.
-        void enrichImageCapture(convex, { docId, image: blob, derived, userTags: tags, logTag: 'screenshot' });
+        // Domain and shape tags now; the embedding and AI labels come from
+        // the processing queue, which the caller kicks once this resolves.
+        void applyDerivedMetadata(convex, { docId, derived, userTags: tags, logTag: 'screenshot' });
         return { sessionName };
     } finally {
         bitmap.close();

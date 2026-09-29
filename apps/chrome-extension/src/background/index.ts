@@ -8,6 +8,9 @@ import { screenshotElement } from '~background/functions/screenshot-element';
 // MV3 worker is still allowed to importScripts().
 import { runReindex, isReindexing } from '~background/functions/reindex';
 import { broadcastSessionState } from '~background/functions/session-broadcast';
+import { kickProcessingQueue, notifySignedIn, startProcessingQueue } from '~background/functions/processing-queue';
+import { embedText } from '~background/functions/local-embeddings';
+import { imageQueryText } from '../../../../packages/backend/convex/lib/ai_config';
 
 
 const publishableKey = process.env.PLASMO_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -20,7 +23,7 @@ const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 // Build marker: prints on every service worker start. If the value below
 // does not match the running console output, Chrome is serving a cached
 // worker and the extension needs a real reload.
-const BUILD_MARKER = 'phase-2 element-picker 2026-09-29';
+const BUILD_MARKER = 'phase-3 ai-queue 2026-09-29';
 console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 /* ─── Auth ──────────────────────────────────────────────────────── */
@@ -90,6 +93,8 @@ async function syncAuth(): Promise<boolean> {
   if (signedIn !== convexSignedIn) {
     convexSignedIn = signedIn;
     convex.setAuth(({ forceRefreshToken }) => getToken(forceRefreshToken));
+    // Signed in (at start, or later from the popup / web app): wake the queue.
+    if (signedIn) void notifySignedIn();
   }
   return signedIn;
 }
@@ -109,6 +114,38 @@ function errorMessage(e: unknown): string {
   if (e && typeof e === 'object' && 'message' in e) return String((e as any).message);
   return String(e ?? 'Unknown error');
 }
+
+/**
+ * Search the caller's captures through the one hybrid search action. With
+ * `embed`, the query is embedded twice - caption-phrased for image captures,
+ * raw for text captures - and fused with keyword hits; without it (or if the
+ * model is unavailable) the same action runs keyword-only.
+ */
+async function searchCaptures(q: string, limit: number, embed: boolean) {
+  let vectors: { vector?: number[]; textVector?: number[] } = {};
+  if (embed && q) {
+    try {
+      // Sequential: the offscreen document runs one inference at a time.
+      const vector = await embedText(imageQueryText(q));
+      const textVector = await embedText(q);
+      vectors = { vector, textVector };
+    } catch (e) {
+      console.log('[Search] query embedding unavailable, keyword only:', e);
+    }
+  }
+  const { results, diagnostics } = await convex.action(api.search.searchCaptures, {
+    query: q,
+    limit,
+    ...vectors,
+  });
+  console.log('[Search]', JSON.stringify(q), '->', results.length, 'results', JSON.stringify(diagnostics));
+  return { results, mode: vectors.vector ? 'hybrid' : 'keyword' };
+}
+
+// ── Enrichment queue: embeds and tags pending captures locally ──
+// Started unconditionally: signed out it just waits, and syncAuth wakes it
+// (notifySignedIn) as soon as a session appears.
+void startProcessingQueue(convex, { isSignedIn: syncAuth });
 
 // ── Pre-load CLIP models in the background so first capture is fast ──
 // This is fire-and-forget; if it fails the models load lazily on first use.
@@ -161,6 +198,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               saved = await screenshotElement({ msg, sender, convex });
             }
             sendResponse({ ok: true, sessionName: saved.sessionName });
+            // Saved as pending; analyse it now rather than on the next update.
+            void kickProcessingQueue();
           } catch (e) {
             console.error(`[Service Worker]: ${msg.type} failed:`, e);
             sendResponse({ ok: false, error: errorMessage(e) });
@@ -189,49 +228,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
 
-        if (msg.type === 'SEARCH_SEMANTIC') {
-          const q = String((msg as any).q ?? '').trim();
-          const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
-
-          // ── Try local CLIP-based search first (no API call) ───────
-          try {
-            const { embedText } = await import('./functions/local-embeddings');
-            const vector = await embedText(q);
-            if (vector && vector.length > 0) {
-              // Action, not query: Convex vector search is only callable from
-              // an action. Backed by the by_localEmbedding vector index rather
-              // than a full scan of the user's captures.
-              const { results, diagnostics } = await convex.action(
-                (api as any).local_ai.searchIndexed,
-                { vector, limit, minScore: 0.15 }
-              );
-              console.log('[Search] Local results:', results?.length, 'scores:', results?.map((r: any) => r.score?.toFixed(3)));
-              console.log('[Search] diagnostics:', JSON.stringify(diagnostics, null, 2));
-              if (results && results.length > 0) {
-                sendResponse({ results, mode: 'local' });
-                return;
-              }
-            }
-          } catch (e) {
-            console.log('[Service Worker] Local search unavailable, falling back to API:', e);
-          }
-
-          // No OpenAI fallback: if the local vector search found nothing the
-          // caller drops through to SEARCH_CAPTURES (keyword) on its own.
-          sendResponse({ results: [], mode: 'local-empty' });
-          return;
-        }
-
-        if (msg.type === 'SEARCH_CAPTURES') {
+        // Hybrid search: image-space and text-space vector hits fused with
+        // keyword hits. Kept as two message types for content scripts built
+        // before the merge; SEARCH_CAPTURES skips the model.
+        if (msg.type === 'SEARCH_SEMANTIC' || msg.type === 'SEARCH_CAPTURES') {
           const q = String((msg as any).q ?? '').trim();
           const limit = typeof (msg as any).limit === 'number' ? (msg as any).limit : 30;
           try {
-            const { results } = await convex.query(api.search.searchCapturesFallback, { q, limit });
-            console.log('[Search] keyword fallback for', JSON.stringify(q), '->', results?.length ?? 0, 'results');
-            sendResponse({ results });
+            sendResponse(await searchCaptures(q, limit, msg.type === 'SEARCH_SEMANTIC'));
           } catch (e) {
-            console.error('[Search] keyword fallback threw:', e);
-            sendResponse({ results: [] });
+            console.error('[Search] failed:', e);
+            sendResponse({ results: [], mode: 'error' });
           }
           return;
         }
@@ -306,7 +313,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         if (msg.type === 'REINDEX_STATUS') {
-          const { remaining } = await convex.query((api as any).local_ai.listNeedingEmbedding, { limit: 1 });
+          const { remaining } = await convex.query(api.local_ai.listNeedingEmbedding, { limit: 1 });
           sendResponse({ remaining, running: isReindexing() });
           return;
         }

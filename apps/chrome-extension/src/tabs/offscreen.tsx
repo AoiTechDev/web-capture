@@ -6,6 +6,8 @@
  * The service worker communicates with this page via chrome.runtime messages.
  */
 
+import { LOCAL_MODEL_ID } from "../../../../packages/backend/convex/lib/ai_config"
+
 /* ─── Transformers.js model management ─────────────────────────── */
 
 let _tokenizer: any = null
@@ -14,7 +16,8 @@ let _processor: any = null
 let _visionModel: any = null
 let _transformers: any = null
 
-const MODEL_ID = "Xenova/clip-vit-base-patch32"
+// Set in one place for the whole repo; see lib/ai_config.
+const MODEL_ID = LOCAL_MODEL_ID
 
 async function getTransformers() {
   if (!_transformers) {
