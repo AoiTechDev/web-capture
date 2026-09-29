@@ -1,6 +1,6 @@
 import { captureElement } from "./capture-element"
 import { captureElementScreenshot } from "./screenshot-capture"
-import { reportCaptureResult, showCaptureError } from "../auth/auth-notification"
+import { reportCaptureSaved, showCaptureError } from "../auth/auth-notification"
 import { showCategoryOverlay } from "../category/category-overlay"
 import { addRecentCategory, getRecentCategories, addRecentTags } from "../category/category-storage"
 import {
@@ -65,7 +65,7 @@ async function sendCapture(data: PendingCapture, category?: string, tags?: strin
     type: data.kind === "image" ? "SAVE_IMAGE_CAPTURE" : "SAVE_NON_IMAGE_CAPTURE",
     data: { ...data, category, tags },
   })
-  reportCaptureResult(res)
+  reportCaptureSaved(res)
 }
 
 async function openCategoryOverlayAndHandlePending() {
@@ -181,7 +181,54 @@ async function handleElementClick(event: MouseEvent) {
   event.preventDefault()
   event.stopPropagation()
 
-  const elementData = captureElement(event.target as HTMLElement)
+  // The highlighted element, which arrow keys may have moved off the one
+  // under the cursor.
+  await saveElement(currentHoveredElement ?? (event.target as HTMLElement))
+}
+
+/** Highlight `el` as the current pick, e.g. after moving with the arrow keys. */
+function highlight(el: HTMLElement) {
+  ensureHighlightOverlay()
+  positionHighlightOverlay(el)
+  currentHoveredElement = el
+}
+
+/**
+ * Keyboard while picking: ↑ parent, ↓ first child, Enter saves the current
+ * element, Esc cancels. Handled before the page sees the key.
+ */
+function handleSelectionKeydown(event: KeyboardEvent) {
+  if (!isSelecting) return
+  const current = currentHoveredElement
+
+  if (event.key === "Escape") {
+    event.preventDefault()
+    event.stopPropagation()
+    toggleSelectionInternal(false)
+    return
+  }
+  if (!current) return
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault()
+    event.stopPropagation()
+    const parent = current.parentElement
+    // Stop at <body>: <html> is never a useful pick.
+    if (parent && parent !== document.documentElement) highlight(parent)
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault()
+    event.stopPropagation()
+    const child = current.firstElementChild
+    if (child instanceof HTMLElement) highlight(child)
+  } else if (event.key === "Enter") {
+    event.preventDefault()
+    event.stopPropagation()
+    void saveElement(current)
+  }
+}
+
+async function saveElement(target: HTMLElement) {
+  const elementData = captureElement(target)
   console.log("🔍 Captured element data:", elementData)
 
   if (categoryPromptEnabled && !selectedCategory) {
@@ -217,12 +264,14 @@ function addEventListeners() {
   document.addEventListener("mouseover", outlineSelectedElement, true)
   document.addEventListener("mouseout", removeOutlineSelectedElement, true)
   document.addEventListener("click", handleElementClick, true)
+  document.addEventListener("keydown", handleSelectionKeydown, true)
 }
 
 function removeEventListeners() {
   document.removeEventListener("mouseover", outlineSelectedElement, true)
   document.removeEventListener("mouseout", removeOutlineSelectedElement, true)
   document.removeEventListener("click", handleElementClick, true)
+  document.removeEventListener("keydown", handleSelectionKeydown, true)
 
   hideHighlightOverlay()
   currentHoveredElement = null

@@ -1,6 +1,7 @@
 let highlightOverlay: HTMLElement | null = null
-let tagNameOverlay: HTMLElement | null = null
-let tagNameContainer: HTMLElement | null = null
+let labelOverlay: HTMLElement | null = null
+
+const LABEL_HEIGHT = 20
 
 export function getHighlightOverlay(): HTMLElement | null {
   return highlightOverlay
@@ -9,6 +10,8 @@ export function getHighlightOverlay(): HTMLElement | null {
 export function ensureHighlightOverlay(): HTMLElement {
   if (highlightOverlay) return highlightOverlay
 
+  // Both layers are pointer-events: none so hovering and clicking still reach
+  // the page element underneath.
   highlightOverlay = document.createElement("div")
   highlightOverlay.style.position = "absolute"
   highlightOverlay.style.backgroundColor = "rgba(59, 130, 246, 0.3)"
@@ -19,35 +22,46 @@ export function ensureHighlightOverlay(): HTMLElement {
   highlightOverlay.style.transition = "all 0.1s ease-out"
   highlightOverlay.style.display = "none"
   highlightOverlay.style.boxShadow = "0 0 0 1px rgba(59, 130, 246, 0.5)"
+  highlightOverlay.style.boxSizing = "border-box"
 
-  tagNameOverlay = document.createElement("p")
-  tagNameOverlay.style.position = "absolute"
-  tagNameOverlay.style.color = "white"
-  tagNameOverlay.style.fontSize = "12px"
-  tagNameOverlay.style.fontWeight = "bold"
-  tagNameOverlay.style.margin = "0"
-  tagNameOverlay.style.padding = "0"
-  tagNameOverlay.style.zIndex = "999999"
-  tagNameOverlay.style.transition = "all 0.1s ease-out"
-  tagNameOverlay.style.display = "none"
-
-  tagNameContainer = document.createElement("div")
-  tagNameContainer.style.position = "absolute"
-  tagNameContainer.style.backgroundColor = "rgba(0, 0, 0, 0.8)"
-  tagNameContainer.style.borderRadius = "4px"
-  tagNameContainer.style.pointerEvents = "none"
-  tagNameContainer.style.zIndex = "999999"
-  tagNameContainer.style.transition = "all 0.1s ease-out"
-  tagNameContainer.style.display = "none"
+  labelOverlay = document.createElement("div")
+  labelOverlay.style.position = "absolute"
+  labelOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.8)"
+  labelOverlay.style.color = "white"
+  labelOverlay.style.font = "600 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+  labelOverlay.style.height = `${LABEL_HEIGHT}px`
+  labelOverlay.style.padding = "0 6px"
+  labelOverlay.style.borderRadius = "4px"
+  labelOverlay.style.whiteSpace = "nowrap"
+  labelOverlay.style.maxWidth = "420px"
+  labelOverlay.style.overflow = "hidden"
+  labelOverlay.style.textOverflow = "ellipsis"
+  labelOverlay.style.pointerEvents = "none"
+  labelOverlay.style.zIndex = "999999"
+  labelOverlay.style.display = "none"
 
   document.body.appendChild(highlightOverlay)
-  document.body.appendChild(tagNameContainer)
-  document.body.appendChild(tagNameOverlay)
+  document.body.appendChild(labelOverlay)
   return highlightOverlay
 }
 
+/** Up to two classes, each cut to a readable length. */
+function shortClasses(element: Element): string {
+  return Array.from(element.classList)
+    .slice(0, 2)
+    .map((c) => (c.length > 20 ? `${c.slice(0, 19)}…` : c))
+    .map((c) => `.${c}`)
+    .join("")
+}
+
+/** "div.card.shadow  320×200": tag, shortened classes, size in CSS px. */
+export function describeElement(element: Element, rect: { width: number; height: number }): string {
+  const size = `${Math.round(rect.width)}×${Math.round(rect.height)}`
+  return `${element.tagName.toLowerCase()}${shortClasses(element)}  ${size}`
+}
+
 export function positionHighlightOverlay(element: HTMLElement) {
-  if (!highlightOverlay || !tagNameOverlay || !tagNameContainer) return
+  if (!highlightOverlay || !labelOverlay) return
 
   const rect = element.getBoundingClientRect()
   const scrollX = window.pageXOffset || document.documentElement.scrollLeft
@@ -59,31 +73,20 @@ export function positionHighlightOverlay(element: HTMLElement) {
   highlightOverlay.style.top = `${rect.top + scrollY}px`
   highlightOverlay.style.display = "block"
 
-  tagNameOverlay.textContent = element.tagName
-  tagNameOverlay.style.display = "block"
-
-  const tagNameHeight = 20
-  const tagNamePadding = 4
-  tagNameContainer.style.display = "flex"
-  tagNameContainer.style.left = `${rect.left + scrollX}px`
-  tagNameContainer.style.top = `${rect.top + scrollY - tagNameHeight}px`
-  tagNameContainer.style.width = "100px"
-  tagNameContainer.style.height = `20px`
-  tagNameContainer.style.padding = `3px 6px`
-
-  tagNameOverlay.style.left = `${rect.left + scrollX + tagNamePadding}px`
-  tagNameOverlay.style.top = `${rect.top + scrollY - tagNameHeight + tagNamePadding}px`
+  labelOverlay.textContent = describeElement(element, rect)
+  labelOverlay.style.display = "block"
+  labelOverlay.style.left = `${Math.max(0, rect.left) + scrollX}px`
+  // Above the element, or inside its top edge when there is no room above.
+  const above = rect.top - LABEL_HEIGHT - 2
+  labelOverlay.style.top = `${(above >= 0 ? above : Math.max(0, rect.top) + 2) + scrollY}px`
 }
 
 export function hideHighlightOverlay() {
   if (highlightOverlay) {
     highlightOverlay.style.display = "none"
   }
-  if (tagNameOverlay) {
-    tagNameOverlay.style.display = "none"
-  }
-  if (tagNameContainer) {
-    tagNameContainer.style.display = "none"
+  if (labelOverlay) {
+    labelOverlay.style.display = "none"
   }
 }
 
@@ -91,14 +94,9 @@ export function cleanupHighlight() {
   if (highlightOverlay && highlightOverlay.parentNode) {
     highlightOverlay.parentNode.removeChild(highlightOverlay)
   }
-  if (tagNameOverlay && tagNameOverlay.parentNode) {
-    tagNameOverlay.parentNode.removeChild(tagNameOverlay)
-  }
-  if (tagNameContainer && tagNameContainer.parentNode) {
-    tagNameContainer.parentNode.removeChild(tagNameContainer)
+  if (labelOverlay && labelOverlay.parentNode) {
+    labelOverlay.parentNode.removeChild(labelOverlay)
   }
   highlightOverlay = null
-  tagNameOverlay = null
-  tagNameContainer = null
+  labelOverlay = null
 }
-
