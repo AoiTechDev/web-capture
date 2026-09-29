@@ -82,6 +82,9 @@ importers:
       '@types/webextension-polyfill':
         specifier: ^0.12.3
         version: 0.12.3
+      happy-dom:
+        specifier: ^18
+        version: 18.0.1
       postcss:
         specifier: ^8.5.6
         version: 8.5.6
@@ -91,6 +94,9 @@ importers:
       typescript:
         specifier: ^5.9.2
         version: 5.9.2
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(happy-dom@18.0.1)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1)
 
   apps/web:
     dependencies:
@@ -179,7 +185,7 @@ importers:
         version: 5.9.2
       vitest:
         specifier: ^3.2.4
-        version: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1)
+        version: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(happy-dom@18.0.1)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1)
 
   packages/eslint-config:
     devDependencies:
@@ -2984,6 +2990,9 @@ packages:
   '@types/webextension-polyfill@0.12.3':
     resolution: {integrity: sha512-F58aDVSeN/MjUGazXo/cPsmR76EvqQhQ1v4x23hFjUX0cfAJYE+JBWwiOGW36/VJGGxoH74sVlRIF3z7SJCKyg==}
 
+  '@types/whatwg-mimetype@3.0.2':
+    resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
+
   '@typescript-eslint/eslint-plugin@7.18.0':
     resolution: {integrity: sha512-94EQTWZ40mzBc42ATNIBimBEDltSJ9RQHCC8vc/PDbxi4k8dVwUAv4o98dk50M1zB+JGFxp43FP7f8+FP8R6Sw==}
     engines: {node: ^18.18.0 || >=20.0.0}
@@ -4529,6 +4538,10 @@ packages:
 
   guid-typescript@1.0.9:
     resolution: {integrity: sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ==}
+
+  happy-dom@18.0.1:
+    resolution: {integrity: sha512-qn+rKOW7KWpVTtgIUi6RVmTBZJSe2k0Db0vh1f7CWrWclkkc7/Q+FrOfkZIb2eiErLyqu5AXEzE7XthO9JVxRA==}
+    engines: {node: '>=20.0.0'}
 
   has-bigints@1.1.0:
     resolution: {integrity: sha512-R3pbpkcIqv2Pm3dUwgjclDRVmWpTJW2DcMzcIhEXEx1oh/CEMObMm3KLmRJOdvhM7o4uQBnwr8pzRK2sJWIqfg==}
@@ -6535,6 +6548,10 @@ packages:
 
   webidl-conversions@4.0.2:
     resolution: {integrity: sha512-YQ+BmxuTgd6UXZW3+ICGfyqRyHXVlD5GtQr5+qjiNW7bF0cqrzX500HVXPBOvgXb5YnzDd+h0zqyv61KUD7+Sg==}
+
+  whatwg-mimetype@3.0.0:
+    resolution: {integrity: sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q==}
+    engines: {node: '>=12'}
 
   whatwg-url@7.1.0:
     resolution: {integrity: sha512-WUu7Rg1DroM7oQvGWfOiAK21n74Gg+T4elXEQYkOhtyLeWiJFoOGLXPKI/9gzIie9CtwVLm8wtw6YJdKyxSjeg==}
@@ -9521,6 +9538,8 @@ snapshots:
 
   '@types/webextension-polyfill@0.12.3': {}
 
+  '@types/whatwg-mimetype@3.0.2': {}
+
   '@typescript-eslint/eslint-plugin@7.18.0(@typescript-eslint/parser@7.18.0(eslint@9.36.0(jiti@2.6.0))(typescript@5.9.2))(eslint@9.36.0(jiti@2.6.0))(typescript@5.9.2)':
     dependencies:
       '@eslint-community/regexpp': 4.12.1
@@ -10317,7 +10336,7 @@ snapshots:
   code-red@1.0.4:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
       acorn: 8.15.0
       estree-walker: 3.0.3
       periscopic: 3.1.0
@@ -11009,7 +11028,7 @@ snapshots:
       eslint: 9.36.0(jiti@2.6.0)
     optionalDependencies:
       '@typescript-eslint/eslint-plugin': 7.18.0(@typescript-eslint/parser@7.18.0(eslint@9.36.0(jiti@2.6.0))(typescript@5.9.2))(eslint@9.36.0(jiti@2.6.0))(typescript@5.9.2)
-      vitest: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1)
+      vitest: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(happy-dom@18.0.1)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1)
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -11100,7 +11119,7 @@ snapshots:
 
   estree-walker@3.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
 
   esutils@2.0.3: {}
 
@@ -11377,6 +11396,12 @@ snapshots:
 
   guid-typescript@1.0.9: {}
 
+  happy-dom@18.0.1:
+    dependencies:
+      '@types/node': 20.19.17
+      '@types/whatwg-mimetype': 3.0.2
+      whatwg-mimetype: 3.0.0
+
   has-bigints@1.1.0: {}
 
   has-flag@4.0.0: {}
@@ -11586,7 +11611,7 @@ snapshots:
 
   is-reference@3.0.3:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
 
   is-regex@1.2.1:
     dependencies:
@@ -12262,7 +12287,7 @@ snapshots:
 
   periscopic@3.1.0:
     dependencies:
-      '@types/estree': 1.0.8
+      '@types/estree': 1.0.9
       estree-walker: 3.0.3
       is-reference: 3.0.3
 
@@ -13548,7 +13573,7 @@ snapshots:
       sass: 1.92.1
       yaml: 2.8.1
 
-  vitest@3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1):
+  vitest@3.2.7(@edge-runtime/vm@5.0.0)(@types/node@24.5.2)(happy-dom@18.0.1)(jiti@2.6.0)(less@4.4.1)(lightningcss@1.30.1)(sass@1.92.1)(yaml@2.8.1):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
@@ -13576,6 +13601,7 @@ snapshots:
     optionalDependencies:
       '@edge-runtime/vm': 5.0.0
       '@types/node': 24.5.2
+      happy-dom: 18.0.1
     transitivePeerDependencies:
       - jiti
       - less
@@ -13603,6 +13629,8 @@ snapshots:
   webextension-polyfill@0.12.0: {}
 
   webidl-conversions@4.0.2: {}
+
+  whatwg-mimetype@3.0.0: {}
 
   whatwg-url@7.1.0:
     dependencies:
