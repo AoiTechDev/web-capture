@@ -10,9 +10,12 @@ import { Id } from "../../../../packages/backend/convex/_generated/dataModel";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
 import { preloadImage } from "@/utils/image-preloader";
 import ChangeCategoryDialog from "./ChangeCategoryDialog";
-interface MasonryItem {
+import type { CaptureDetails } from "./DesignDnaPanel";
+interface MasonryItem extends CaptureDetails {
   _id: string;
   url?: string;
+  /** Grid-sized WebP; the full image is used when there is none. */
+  thumbUrl?: string | null;
   width: number;
   height: number;
   kind?: string;
@@ -70,7 +73,7 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { setIsOpen, setImageUrl } = useMaximizeImageStore();
+  const { setIsOpen, setImageUrl, setDetails } = useMaximizeImageStore();
   const deleteById = useMutation(api.upload.deleteById);
 
   const handleDownload = async (url?: string, preferredName?: string) => {
@@ -212,6 +215,11 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                     if (item.url) preloadImage(item.url);
                     setIsOpen(true);
                     setImageUrl(item.url || "");
+                    setDetails({
+                      designDna: item.designDna ?? null,
+                      palette: item.palette ?? null,
+                      clipped: item.clipped ?? null,
+                    });
                   }}
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
@@ -262,9 +270,9 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   if (item.url) preloadImage(item.url);
                 }}
               >
-                {item.url && (
+                {(item.thumbUrl || item.url) && (
                   <Image
-                    src={item.url}
+                    src={(item.thumbUrl || item.url)!}
                     alt={item.alt || ""}
                     width={position.width}
                     height={position.height}
@@ -279,15 +287,33 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
               </div>
 
               <div className="space-y-2 border-t border-[var(--border)] px-3 py-2.5">
-                {item.pageUrl && (
-                  <div className="mono truncate text-[11px] text-[var(--text-muted)]">
-                    {(() => {
-                      try {
-                        return new URL(item.pageUrl).hostname.replace(/^www\./, "");
-                      } catch {
-                        return item.pageUrl;
-                      }
-                    })()}
+                {(item.pageUrl || (item.palette?.length ?? 0) > 0) && (
+                  <div className="flex items-center justify-between gap-2">
+                    {item.pageUrl && (
+                      <div className="mono min-w-0 truncate text-[11px] text-[var(--text-muted)]">
+                        {(() => {
+                          try {
+                            return new URL(item.pageUrl).hostname.replace(/^www\./, "");
+                          } catch {
+                            return item.pageUrl;
+                          }
+                        })()}
+                      </div>
+                    )}
+                    {/* Pixel palette, heaviest first. Sits on the source line
+                        so the footer height the layout assumes is unchanged. */}
+                    {item.palette && item.palette.length > 0 && (
+                      <div className="ml-auto flex shrink-0 overflow-hidden rounded-[3px] border border-[var(--border)]">
+                        {item.palette.slice(0, 6).map((p, i) => (
+                          <span
+                            key={`${p.hex}-${i}`}
+                            title={p.hex}
+                            className="h-2.5 w-2.5"
+                            style={{ backgroundColor: p.hex }}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

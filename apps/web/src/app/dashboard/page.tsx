@@ -1,7 +1,6 @@
 "use client";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
 import MasonryLayout from "@/components/MansoryLayout";
-import MaximizedImage from "@/components/MaximizedImage";
 import MaximizedText from "@/components/MaximizedText";
 import TextWrapLayout from "@/components/TextWrapLayout";
 import LinkList from "@/components/LinkList";
@@ -11,14 +10,16 @@ import { MasonrySkeleton, ListSkeleton } from "@/components/Skeletons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Images, Camera, Link, FileText } from "lucide-react";
 import { useQuery } from "convex/react";
+import type { CaptureDetails } from "@/components/DesignDnaPanel";
 
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
 
 /** Row shape returned by `searchCapturesFallback` and consumed by the layouts. */
-type SearchRow = {
+type SearchRow = CaptureDetails & {
   id: string;
   imageUrl: string | null;
+  thumbUrl?: string | null;
   pageUrl: string | null;
   width: number | null;
   height: number | null;
@@ -29,9 +30,10 @@ type SearchRow = {
 };
 
 /** What the layout components accept once a row has been normalised. */
-type DisplayItem = {
+type DisplayItem = CaptureDetails & {
   _id: string;
   url?: string;
+  thumbUrl?: string | null;
   pageUrl?: string;
   width: number;
   height: number;
@@ -159,6 +161,10 @@ export default function DashboardPage() {
       rows.map((r: SearchRow) => ({
         _id: r.id,
         url: r.imageUrl ?? undefined,
+        thumbUrl: r.thumbUrl ?? null,
+        designDna: r.designDna ?? null,
+        palette: r.palette ?? null,
+        clipped: r.clipped ?? null,
         pageUrl: r.pageUrl ?? undefined,
         width: r.width || 600,
         height: r.height || 400,
@@ -280,7 +286,6 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <MaximizedImage />
       <MaximizedText />
     </main>
   );

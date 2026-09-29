@@ -6,17 +6,18 @@ import { useCachedQuery } from "@/hooks/useStableQuery";
 import { MasonrySkeleton } from "@/components/Skeletons";
 import { ArrowLeft } from "lucide-react";
 import MasonryLayout from "@/components/MansoryLayout";
-import MaximizedImage from "@/components/MaximizedImage";
 import { api } from "../../../../../../../packages/backend/convex/_generated/api";
 import { Id } from "../../../../../../../packages/backend/convex/_generated/dataModel";
 import LinkList from "@/components/LinkList";
 import TextWrapLayout from "@/components/TextWrapLayout";
+import type { CaptureDetails } from "@/components/DesignDnaPanel";
 
 /** The query builds these rows dynamically, so name the shape explicitly here. */
-type SessionItem = {
+type SessionItem = CaptureDetails & {
   _id: string;
   kind: string;
   url: string | null;
+  thumbUrl?: string | null;
   pageUrl: string | null;
   width: number;
   height: number;
@@ -114,6 +115,10 @@ export default function SessionDetailPage({
             items={visual.map((i) => ({
               _id: i._id,
               url: i.url ?? undefined,
+              thumbUrl: i.thumbUrl ?? null,
+              designDna: i.designDna ?? null,
+              palette: i.palette ?? null,
+              clipped: i.clipped ?? null,
               width: i.width,
               height: i.height,
               kind: i.kind,
@@ -166,6 +171,7 @@ export default function SessionDetailPage({
 
       </div>
 
+      {/* The grid's Maximize action (and the Design DNA view) opens this. */}
     </main>
   );
 }
