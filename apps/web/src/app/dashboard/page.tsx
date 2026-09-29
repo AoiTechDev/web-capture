@@ -9,29 +9,51 @@ import { useCachedQuery } from "@/hooks/useStableQuery";
 import { MasonrySkeleton, ListSkeleton } from "@/components/Skeletons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Images, Camera, Link, FileText } from "lucide-react";
-import { useQuery } from "convex/react";
+import { useAction } from "convex/react";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { CaptureDetails } from "@/components/DesignDnaPanel";
 
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
 
-/** Row shape returned by `searchCapturesFallback` and consumed by the layouts. */
-type SearchRow = CaptureDetails & {
-  id: string;
-  imageUrl: string | null;
-  thumbUrl?: string | null;
-  pageUrl: string | null;
-  width: number | null;
-  height: number | null;
-  alt: string | null;
-  title: string | null;
-  tags: string[];
-  storageId: string | null;
+type SearchArgs = FunctionArgs<typeof api.search.searchCaptures>;
+
+/** Row shape returned by `search.searchCaptures` and consumed by the layouts. */
+type SearchRow = FunctionReturnType<typeof api.search.searchCaptures>["results"][number];
+
+/** Stored kinds each tab lists; the Screenshots tab also holds element and viewport shots. */
+const KINDS_FOR_TAB: Record<Kind, NonNullable<SearchArgs["kinds"]>> = {
+  image: ["image"],
+  screenshot: ["screenshot", "element", "viewport"],
+  link: ["link"],
+  text: ["text"],
+  code: ["code"],
 };
+
+/**
+ * Arguments for `search.searchCaptures`. Keyword-only for now. Once the
+ * dashboard runs the local text encoder, pass the two query embeddings:
+ * `vector` = the query embedded via lib/ai_config `imageQueryText` (matched
+ * against image captures) and `textVector` = the raw query embedded
+ * (matched against text captures). The action fuses them with the keyword
+ * hits; nothing else here changes.
+ */
+function buildSearchArgs(
+  query: string,
+  kind: Kind,
+  vectors: Pick<SearchArgs, "vector" | "textVector"> = {}
+): SearchArgs {
+  return { query, kinds: KINDS_FOR_TAB[kind], limit: 60, ...vectors };
+}
 
 /** What the layout components accept once a row has been normalised. */
 type DisplayItem = CaptureDetails & {
   _id: string;
+  kind?: string;
+  status?: string | null;
+  error?: string | null;
+  aiCategory?: string | null;
+  aiTags?: string[] | null;
   url?: string;
   thumbUrl?: string | null;
   pageUrl?: string;
@@ -85,8 +107,10 @@ export default function DashboardPage() {
   const { selected } = useSelectedCategoryStore();
   const [selectedKind, setSelectedKind] = useState<Kind>("image");
   const [q, setQ] = useState("");
-  const [searchItems, setSearchItems] = useState<DisplayItem[] | null>(null);
-  const fallback = useQuery(api.search.searchCapturesFallback, { q: q.trim() || "__NOOP__", limit: 60 });
+  // Rows remember the tab they were fetched for, so switching tabs never
+  // shows the previous tab's kinds in the wrong layout.
+  const [search, setSearch] = useState<{ kind: Kind; rows: SearchRow[] } | null>(null);
+  const runSearch = useAction(api.search.searchCaptures);
 
   const { data: captures, isLoading: capturesLoading } = useCachedQuery(
     api.captures.byCategoryAndKind,
@@ -138,32 +162,42 @@ export default function DashboardPage() {
   );
 
   const searching = !!q.trim();
-  const visible = searching && searchItems ? searchItems : captures;
-  const total = Array.isArray(visible) ? visible.length : 0;
 
-  // Loading and empty look identical if you only test length, which is what
-  // made the empty state flash before content arrived. Only the absence of a
-  // resolved result counts as loading.
-  const isLoading = searching ? searchItems === null && !fallback : capturesLoading;
-
-  // Local-only search: `searchCapturesFallback` is a plain Convex query with no
-  // external API call. The previous OpenAI-backed `searchCapturesSemantic`
-  // action billed a request per debounced keystroke, so it is no longer used.
+  // Hybrid search action (keyword-only until the dashboard embeds queries).
+  // Debounced, and a newer keystroke discards an older response.
   useEffect(() => {
-    if (!q.trim()) {
-      setSearchItems(null);
+    const query = q.trim();
+    if (!query) {
+      setSearch(null);
       return;
     }
-    const rows = (fallback as { results?: SearchRow[] } | undefined)?.results;
-    if (!Array.isArray(rows)) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const { results } = await runSearch(buildSearchArgs(query, selectedKind));
+        if (!cancelled) setSearch({ kind: selectedKind, rows: results });
+      } catch (err) {
+        console.error("Search failed:", err);
+        if (!cancelled) setSearch({ kind: selectedKind, rows: [] });
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [q, selectedKind, runSearch]);
 
-    setSearchItems(
-      rows.map((r: SearchRow) => ({
+  // Search rows reshaped into what each tab's layout reads.
+  const searchRows = search && search.kind === selectedKind ? search.rows : null;
+  const searchItems = useMemo(
+    () =>
+      searchRows?.map((r) => ({
         _id: r.id,
+        kind: r.kind,
         url: r.imageUrl ?? undefined,
         thumbUrl: r.thumbUrl ?? null,
-        designDna: r.designDna ?? null,
-        palette: r.palette ?? null,
+        designDna: (r.designDna as CaptureDetails["designDna"]) ?? null,
+        palette: (r.palette as CaptureDetails["palette"]) ?? null,
         clipped: r.clipped ?? null,
         pageUrl: r.pageUrl ?? undefined,
         width: r.width || 600,
@@ -171,11 +205,28 @@ export default function DashboardPage() {
         alt: r.alt || r.title || "",
         tags: r.tags || [],
         storageId: r.storageId ?? undefined,
-      }))
-    );
-  }, [q, fallback]);
+        status: r.status,
+        error: r.error,
+        aiCategory: r.aiCategory,
+        aiTags: r.aiTags,
+        // text / link layouts
+        content: r.content ?? "",
+        href: r.href ?? "",
+        text: r.text ?? undefined,
+        title: r.title ?? undefined,
+        category: r.category ?? undefined,
+        timestamp: r.timestamp,
+      })) ?? null,
+    [searchRows]
+  );
 
- 
+  const visible = searching && searchItems ? searchItems : captures;
+  const total = Array.isArray(visible) ? visible.length : 0;
+
+  // Loading and empty look identical if you only test length, which is what
+  // made the empty state flash before content arrived. Only the absence of a
+  // resolved result counts as loading.
+  const isLoading = searching ? searchItems === null : capturesLoading;
 
   return (
     <main id="main-content" className="flex-1 flex flex-col w-full">
@@ -232,7 +283,7 @@ export default function DashboardPage() {
         <p className="text-[12px] text-[var(--text-muted)]">
           {isLoading ? " " : `${total} ${total === 1 ? "capture" : "captures"}`}
         </p>
-        <p className="text-[12px] text-[var(--text-muted)]">Newest first</p>
+        <p className="text-[12px] text-[var(--text-muted)]">{searching ? "Best match" : "Newest first"}</p>
       </div>
 
       <div id="content-area" className="flex-1 overflow-y-auto px-6 pb-6 pt-2">
@@ -247,14 +298,12 @@ export default function DashboardPage() {
         ) : (
           <>
             {(selectedKind === "image" || selectedKind === "screenshot") && (
-              <MasonryLayout
-                items={(q && searchItems ? searchItems : captures) as DisplayItem[]}
-              />
+              <MasonryLayout items={visible as DisplayItem[]} />
             )}
             {selectedKind === "text" && (
               <TextWrapLayout
                 items={
-                  captures as unknown as Array<{
+                  visible as unknown as Array<{
                     _id: string;
                     kind: "text";
                     content: string;
@@ -268,7 +317,7 @@ export default function DashboardPage() {
             {selectedKind === "link" && (
               <LinkList
                 items={
-                  (captures as unknown as Array<{
+                  (visible as unknown as Array<{
                     _id: string;
                     kind: "link";
                     href: string;

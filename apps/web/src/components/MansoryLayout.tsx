@@ -2,7 +2,7 @@
 
 import { useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
-import { Trash, Maximize2, Download, FolderEdit } from "lucide-react";
+import { Trash, Maximize2, Download, FolderEdit, RotateCw } from "lucide-react";
 
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
@@ -24,6 +24,11 @@ interface MasonryItem extends CaptureDetails {
   storageId?: string;
   pageUrl?: string;
   tags?: string[];
+  /** Enrichment state: pending | processing | ready | failed | skipped. */
+  status?: string | null;
+  error?: string | null;
+  aiCategory?: string | null;
+  aiTags?: string[] | null;
 }
 
 interface MasonryLayoutProps {
@@ -35,6 +40,77 @@ const GAP = 16;
 const MIN_HEIGHT = 100;
 const MAX_HEIGHT = 600;
 const FOOTER_HEIGHT = 80; // Approximate height for URL + tags footer
+/** Chips per card, status chip included; the rest collapse into "+n". */
+const MAX_CHIPS = 3;
+
+/**
+ * The card's chip row: the enrichment state while the model works (or a
+ * Retry when it failed), then the model's category and top tags once ready,
+ * then the user's own tags. Neutral chips throughout, per the design brief.
+ */
+function CaptureChips({
+  item,
+  retrying,
+  onRetry,
+}: {
+  item: MasonryItem;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const status = retrying ? "pending" : item.status;
+  const analyzing = status === "pending" || status === "processing";
+  const failed = status === "failed";
+
+  const labels: string[] = [];
+  const push = (t?: string | null) => {
+    const v = t?.trim();
+    if (v && !labels.some((l) => l.toLowerCase() === v.toLowerCase())) labels.push(v);
+  };
+  if (status === "ready") {
+    if (item.aiCategory && item.aiCategory !== "other") push(item.aiCategory);
+    (item.aiTags ?? []).slice(0, 2).forEach(push);
+  }
+  (item.tags ?? []).forEach(push);
+
+  const room = MAX_CHIPS - (analyzing || failed ? 1 : 0);
+  const shown = labels.slice(0, room);
+  if (!analyzing && !failed && shown.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {analyzing && (
+        <span className="chip text-[var(--text-subtle)]" title="Embedding and tagging on your machine">
+          Analyzing…
+        </span>
+      )}
+      {failed && (
+        <button
+          type="button"
+          className="chip transition-colors hover:text-[var(--text)]"
+          title={item.error ? `Analysis failed: ${item.error}` : "Analysis failed"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry();
+          }}
+        >
+          <RotateCw className="h-3 w-3 text-[var(--warning)]" />
+          Retry
+        </button>
+      )}
+      {shown.map((tag, idx) => (
+        <span
+          key={`${tag}-${idx}`}
+          className={idx === 0 && status === "ready" && tag === item.aiCategory ? "chip text-[var(--text)]" : "chip"}
+        >
+          {tag}
+        </span>
+      ))}
+      {labels.length > shown.length && (
+        <span className="chip text-[var(--text-subtle)]">+{labels.length - shown.length}</span>
+      )}
+    </div>
+  );
+}
 
 
 const getColumnWidth = () => {
@@ -75,6 +151,10 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { setIsOpen, setImageUrl, setDetails } = useMaximizeImageStore();
   const deleteById = useMutation(api.upload.deleteById);
+  const retryProcessing = useMutation(api.local_ai.retryProcessing);
+  // Search results do not update live, so a retried card is shown as
+  // analysing locally until its row is next fetched.
+  const [retried, setRetried] = useState<Set<string>>(() => new Set());
 
   const handleDownload = async (url?: string, preferredName?: string) => {
     if (!url) return;
@@ -317,22 +397,21 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                   </div>
                 )}
 
-                {item.tags && item.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {/* Capped at three: auto-tagging produces 4-8 per capture and
-                        an uncapped row pushes the footer taller than the image. */}
-                    {item.tags.slice(0, 3).map((tag, idx) => (
-                      <span key={idx} className="chip">
-                        {tag}
-                      </span>
-                    ))}
-                    {item.tags.length > 3 && (
-                      <span className="chip text-[var(--text-subtle)]">
-                        +{item.tags.length - 3}
-                      </span>
-                    )}
-                  </div>
-                )}
+                <CaptureChips
+                  item={item}
+                  retrying={retried.has(item._id) && item.status === "failed"}
+                  onRetry={() => {
+                    setRetried((prev) => new Set(prev).add(item._id));
+                    retryProcessing({ captureId: item._id as Id<"captures"> }).catch((err) => {
+                      console.error("Failed to retry analysis:", err);
+                      setRetried((prev) => {
+                        const next = new Set(prev);
+                        next.delete(item._id);
+                        return next;
+                      });
+                    });
+                  }}
+                />
               </div>
             </div>
           </div>
