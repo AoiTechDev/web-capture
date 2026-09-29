@@ -53,6 +53,10 @@ export const searchCapturesFallback = query({
           d.storageId
             ? await ctx.storage.getUrl(d.storageId)
             : null,
+        thumbUrl: d.thumbStorageId ? await ctx.storage.getUrl(d.thumbStorageId) : null,
+        palette: d.palette ?? null,
+        designDna: d.designDna ?? null,
+        clipped: d.clipped ?? false,
         pageUrl: d.url ?? null,
         title: d.title ?? d.alt ?? null,
         alt: d.alt ?? null,

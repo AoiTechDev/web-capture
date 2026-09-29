@@ -14,6 +14,64 @@ export const captureStatusValidator = v.union(
   v.literal("skipped")
 );
 
+const weight = { weight: v.float64() };
+
+/** One colour found in an element's computed styles. Spec 6.1 `DesignDNA`. */
+export const dnaColorValidator = v.object({
+  hex: v.string(),
+  usage: v.union(v.literal("text"), v.literal("background"), v.literal("border")),
+  ...weight,
+});
+
+export const dnaFontValidator = v.object({
+  family: v.string(),
+  generic: v.boolean(),
+  /** px */
+  size: v.float64(),
+  fontWeight: v.float64(),
+  /** px, null when `normal` */
+  lineHeight: v.union(v.float64(), v.null()),
+  /** px, null when `normal` */
+  letterSpacing: v.union(v.float64(), v.null()),
+  ...weight,
+});
+
+/**
+ * Design DNA of a picked element: what its computed styles say, weighted by
+ * the area each value covers. Mirrors the `DesignDNA` type in spec 6.1.
+ */
+export const designDnaValidator = v.object({
+  version: v.literal(1),
+  colors: v.array(dnaColorValidator),
+  fonts: v.array(dnaFontValidator),
+  radii: v.array(v.object({ value: v.float64(), ...weight })),
+  shadows: v.array(v.object({ value: v.string(), ...weight })),
+  spacing: v.array(v.object({ value: v.float64(), ...weight })),
+  source: v.object({
+    url: v.string(),
+    title: v.string(),
+    viewport: v.object({ w: v.float64(), h: v.float64() }),
+    dpr: v.float64(),
+    rect: v.object({ x: v.float64(), y: v.float64(), w: v.float64(), h: v.float64() }),
+    clipped: v.boolean(),
+  }),
+});
+
+/** A colour from the pixels themselves. Spec 6.2 `PaletteColor`. */
+export const paletteColorValidator = v.object({
+  hex: v.string(),
+  lab: v.array(v.float64()),
+  ...weight,
+});
+
+/** Derived from the stored image; only on kinds that hold one. */
+const imageDerivedFields = {
+  /** Pixel palette, heaviest first (max 6). */
+  palette: v.optional(v.array(paletteColorValidator)),
+  /** WebP thumbnail, max 768px wide, for grids. */
+  thumbStorageId: v.optional(v.id("_storage")),
+};
+
 /** Fields every capture kind carries, whatever it holds. */
 const commonCaptureFields = {
   status: v.optional(captureStatusValidator),
@@ -41,6 +99,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...imageDerivedFields,
     ...commonCaptureFields,
   }),
   v.object({
@@ -111,6 +170,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...imageDerivedFields,
     ...commonCaptureFields,
   }),
   // A screenshot of one picked element, cropped to its bounding rect.
@@ -135,6 +195,9 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...imageDerivedFields,
+    /** Computed-style summary taken when the element was picked. */
+    designDna: v.optional(designDnaValidator),
     ...commonCaptureFields,
   }),
   // A screenshot of the visible viewport.
@@ -157,6 +220,7 @@ export const captureValidator = v.union(
     userId: v.optional(v.string()),
     domain: v.optional(v.string()),
     sessionId: v.optional(v.id("sessions")),
+    ...imageDerivedFields,
     ...commonCaptureFields,
   })
 );
@@ -170,6 +234,8 @@ export default defineSchema({
     .index("by_user_session", ["userId", "sessionId"])
     // Lets a save refuse a storage object another capture already points at.
     .index("by_storageId", ["storageId"])
+    // Same guard for thumbnails.
+    .index("by_thumbStorageId", ["thumbStorageId"])
     // CLIP ViT-B/32 projection dimension. Scoping the index by userId keeps
     // one user's vectors out of another's result set at the index level.
     .vectorIndex("by_localEmbedding", {
@@ -230,6 +296,24 @@ export default defineSchema({
   })
     .index("by_user_lastCaptureAt", ["userId", "lastCaptureAt"])
     .index("by_user_startedAt", ["userId", "startedAt"]),
+  /**
+   * A capture's colours, normalised from its DNA and pixel palette (merged at
+   * ΔE2000 < 5, max 12, weights summing to 1). Kept as rows so a colour filter
+   * can scan colours rather than every capture.
+   */
+  captureColors: defineTable({
+    captureId: v.id("captures"),
+    userId: v.string(),
+    hex: v.string(),
+    /** CIELAB (D65) */
+    l: v.float64(),
+    a: v.float64(),
+    b: v.float64(),
+    /** 0..1, share of the capture */
+    weight: v.float64(),
+  })
+    .index("by_capture", ["captureId"])
+    .index("by_user", ["userId"]),
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),

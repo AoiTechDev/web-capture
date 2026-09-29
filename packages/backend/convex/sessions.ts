@@ -285,11 +285,12 @@ export const listSessions = query({
             )
             .take(24);
 
+          // Prefer the small WebP thumbnail; older captures only have the original.
           const urls = await Promise.all(
             captures
               .filter((c: any) => c.storageId)
               .slice(0, thumbCount)
-              .map((c: any) => ctx.storage.getUrl(c.storageId))
+              .map((c: any) => ctx.storage.getUrl(c.thumbStorageId ?? c.storageId))
           );
           thumbnails = urls.filter((u): u is string => !!u);
         }
@@ -343,6 +344,10 @@ export const getSession = query({
             url: c.storageId
               ? await ctx.storage.getUrl(c.storageId)
               : (c.src ?? null),
+            thumbUrl: c.thumbStorageId ? await ctx.storage.getUrl(c.thumbStorageId) : null,
+            palette: c.palette ?? null,
+            designDna: c.designDna ?? null,
+            clipped: c.clipped ?? false,
             pageUrl: c.url ?? null,
             width: c.width ?? 600,
             height: c.height ?? 400,

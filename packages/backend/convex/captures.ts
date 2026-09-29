@@ -59,6 +59,8 @@ export const byCategoryAndKind = query({
         imagesWithStorage.map(async (d) => ({
           ...d,
           url: await ctx.storage.getUrl(d.storageId!),
+          // Grid-sized WebP; absent on captures saved before thumbnails existed.
+          thumbUrl: d.thumbStorageId ? await ctx.storage.getUrl(d.thumbStorageId) : null,
           pageUrl: d.url,
         }))
       );
