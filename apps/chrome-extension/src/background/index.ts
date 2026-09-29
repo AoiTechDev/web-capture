@@ -20,7 +20,7 @@ const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 // Build marker: prints on every service worker start. If the value below
 // does not match the running console output, Chrome is serving a cached
 // worker and the extension needs a real reload.
-const BUILD_MARKER = 'live-count 00:19:48';
+const BUILD_MARKER = 'phase-2 element-picker 2026-09-29';
 console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 /* ─── Auth ──────────────────────────────────────────────────────── */
