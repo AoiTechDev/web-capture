@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import * as ai from "../convex/ai";
 import * as captures from "../convex/captures";
 import * as links from "../convex/links";
-import * as local_ai from "../convex/local_ai";
 import * as search from "../convex/search";
 
 /**
@@ -21,7 +20,7 @@ describe("function visibility", () => {
     ["ai.embedQuery", ai.embedQuery],
     ["search.searchCapturesSemantic", search.searchCapturesSemantic],
     ["captures.backfillCaptureStatus", captures.backfillCaptureStatus],
-    ["local_ai.hydrateSearchHits", local_ai.hydrateSearchHits],
+    ["search.rankAndHydrate", search.rankAndHydrate],
   ])("%s is internal (not callable via api)", (_name, fn) => {
     expect(isInternal(fn)).toBe(true);
   });
@@ -31,9 +30,9 @@ describe("function visibility", () => {
     expect(pub.map(([n]) => n)).toEqual([]);
   });
 
-  test("search.ts: only the auth-scoped fallback query is public", () => {
+  test("search.ts: only the auth-scoped search functions are public", () => {
     const pub = Object.entries(search).filter(([, fn]) => isPublic(fn));
-    expect(pub.map(([n]) => n)).toEqual(["searchCapturesFallback"]);
+    expect(pub.map(([n]) => n).sort()).toEqual(["searchCaptures", "searchCapturesFallback"]);
   });
 
   test("links.ts public surface is limited to read/insert/enrich", () => {

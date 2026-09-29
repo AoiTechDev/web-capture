@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import type { Id } from "../convex/_generated/dataModel";
+import { buildSearchText } from "../convex/lib/search_rank";
 import { makeT, userA, userB } from "./setup";
 
 export type T = ReturnType<typeof makeT>;
@@ -49,6 +50,8 @@ export async function seedUser(t: T, userId: string, tag = userId) {
       sessionId,
       linkPreviewId: previewId,
       title: `link-${tag}`,
+      // What uploadCapture would store; the keyword index reads it.
+      searchText: buildSearchText({ title: `link-${tag}`, url: "https://page.example", href: `https://example.com/${tag}` }),
     });
     const shotId = await ctx.db.insert("captures", {
       kind: "screenshot",
@@ -59,6 +62,7 @@ export async function seedUser(t: T, userId: string, tag = userId) {
       userId,
       sessionId,
       localEmbedding: vec(512),
+      searchText: buildSearchText({ url: "https://page.example" }),
     });
     return { sessionId, previewId, linkId, shotId, storageId };
   });

@@ -109,21 +109,32 @@ describe("upload.uploadCapture", () => {
     expect((await t.run((ctx) => ctx.db.get(id)))!.kind).toBe("element");
   });
 
-  test.each([0, 511, 513])("rejects localEmbedding of length %i", async (n) => {
+  // Embeddings and AI fields belong to the processing queue
+  // (local_ai.completeProcessing); a client cannot pre-fill them.
+  test("discards client-supplied embeddings and AI fields", async () => {
     const t = makeT();
-    await expect(
-      t.withIdentity(userA).mutation(api.upload.uploadCapture, {
-        capture: { ...baseText, localEmbedding: vec(n) },
-      })
-    ).rejects.toThrow(/512/);
-  });
-
-  test("accepts localEmbedding of length 512", async () => {
-    const t = makeT();
-    const id = await t.withIdentity(userA).mutation(api.upload.uploadCapture, {
-      capture: { ...baseText, localEmbedding: vec(512) },
+    const storageId = await storeBlob(t);
+    const textId = await t.withIdentity(userA).mutation(api.upload.uploadCapture, {
+      capture: {
+        ...baseText,
+        textEmbedding: vec(512),
+        aiCategory: "hero",
+        aiStyle: ["dark"],
+        aiTags: ["forged"],
+        aiAttempts: 5,
+        aiDescription: "forged",
+      },
     });
-    expect((await t.run((ctx) => ctx.db.get(id)))!.localEmbedding).toHaveLength(512);
+    const shotId = await t.withIdentity(userA).mutation(api.upload.uploadCapture, {
+      capture: { kind: "screenshot", url: "https://p", timestamp: 1, storageId, localEmbedding: vec(7) },
+    });
+    const text = (await t.run((ctx) => ctx.db.get(textId))) as any;
+    const shot = (await t.run((ctx) => ctx.db.get(shotId))) as any;
+    for (const key of ["textEmbedding", "aiCategory", "aiStyle", "aiTags", "aiAttempts", "aiDescription"]) {
+      expect(text[key], key).toBeUndefined();
+    }
+    expect(shot.localEmbedding).toBeUndefined();
+    expect(text.status).toBe("pending");
   });
 });
 

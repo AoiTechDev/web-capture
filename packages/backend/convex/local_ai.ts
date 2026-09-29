@@ -1,64 +1,79 @@
 /**
- * Backend functions for the local (Transformers.js) embedding pipeline.
+ * Backend side of the local (Transformers.js) enrichment pipeline.
  *
- * These work alongside the existing OpenAI-based functions in ai.ts / search.ts.
- * Nothing in ai.ts or search.ts is modified — both paths can coexist.
+ * The model runs in the extension, never here. New captures are saved as
+ * `pending`; the extension's service worker subscribes to
+ * `listPendingCaptures`, claims one capture at a time (`claimCapture`), embeds
+ * and zero-shot tags it locally, then reports back with `completeProcessing`
+ * or `failProcessing`. Every function is scoped to the caller's own captures.
+ *
+ * Search over the results lives in search.ts (`searchCaptures`).
  */
 
-import { action, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { assertLocalEmbedding } from "./helpers";
+import { aiCategoryValidator } from "./schema";
+import { AI_MAX_ATTEMPTS, AI_STALE_PROCESSING_MS } from "./lib/ai_config";
+import { buildSearchText } from "./lib/search_rank";
 
 /* ---------- helpers ---------- */
 
 /** Capture kinds whose content is a stored image. */
 const VISUAL_KINDS = new Set(["image", "screenshot", "element", "viewport"]);
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (!a.length || !b.length || a.length !== b.length) return -1;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i] ?? 0;
-    const y = b[i] ?? 0;
-    dot += x * y;
-    na += x * x;
-    nb += y * y;
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1e-9;
-  return dot / denom;
+export function isVisualKind(kind: string): boolean {
+  return VISUAL_KINDS.has(kind);
 }
 
-/* ---------- mutations ---------- */
+/** Whether a capture has the embedding its kind is searched by. */
+function hasEmbedding(d: any): boolean {
+  const vec = isVisualKind(d.kind) ? d.localEmbedding : d.textEmbedding;
+  return Array.isArray(vec) && vec.length > 0;
+}
+
+const MAX_STYLES = 4;
+const MAX_AI_TAGS = 10;
+const MAX_LABEL_LENGTH = 40;
+const MAX_ERROR_LENGTH = 500;
+const MAX_EMBED_TEXT = 1000;
+
+/** Lowercase, trimmed, deduped, length-capped labels. */
+function cleanLabels(labels: string[] | undefined, max: number): string[] | undefined {
+  if (!labels) return undefined;
+  const out: string[] = [];
+  for (const raw of labels) {
+    const label = raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, MAX_LABEL_LENGTH);
+    if (label && !out.includes(label)) out.push(label);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** The text a text-ish capture is embedded from. */
+function embeddableText(d: any): string | null {
+  const parts =
+    d.kind === "link" ? [d.title, d.text, d.href] : d.kind === "text" || d.kind === "code" ? [d.content] : [];
+  const text = parts.filter(Boolean).join(" ").trim().slice(0, MAX_EMBED_TEXT);
+  return text || null;
+}
+
+/** Load a capture the caller owns, or throw. */
+async function ownCapture(ctx: MutationCtx, id: Id<"captures">): Promise<Doc<"captures">> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Unauthorized");
+  const doc = await ctx.db.get(id);
+  if (!doc || doc.userId !== identity.subject) throw new Error("Not found or forbidden");
+  return doc;
+}
+
+/* ---------- metadata ---------- */
 
 /**
- * Patch a capture with a locally-generated CLIP embedding.
- * Called by the Chrome extension after generating the vector client-side.
- */
-export const patchLocalEmbedding = mutation({
-  args: {
-    id: v.id("captures"),
-    localEmbedding: v.array(v.float64()),
-  },
-  handler: async (ctx, { id, localEmbedding }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-    assertLocalEmbedding(localEmbedding);
-    const doc = await ctx.db.get(id);
-    if (!doc || (doc as any).userId !== identity.subject)
-      throw new Error("Not found or forbidden");
-    await ctx.db.patch(id, { localEmbedding });
-    return { ok: true } as const;
-  },
-});
-
-/**
- * Apply automatically derived metadata to a capture.
- *
- * Kept separate from the insert so that tagging failures (model not loaded,
- * offscreen document evicted) never block the capture itself from saving.
+ * Apply metadata derived without a model (source domain, shape tags) at save
+ * time. Kept separate from the insert so it never blocks the capture itself.
  */
 export const applyAutoMetadata = mutation({
   args: {
@@ -67,139 +82,291 @@ export const applyAutoMetadata = mutation({
     domain: v.optional(v.string()),
   },
   handler: async (ctx, { id, tags, domain }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-    const doc = await ctx.db.get(id);
-    if (!doc || (doc as any).userId !== identity.subject)
-      throw new Error("Not found or forbidden");
+    const doc = await ownCapture(ctx, id);
 
-    const patch: Record<string, unknown> = {};
+    const patch: { tags?: string[]; domain?: string } = {};
     if (tags && tags.length) patch.tags = tags;
     if (domain) patch.domain = domain;
     if (Object.keys(patch).length === 0) return { ok: true, patched: false } as const;
 
-    await ctx.db.patch(id, patch);
+    await ctx.db.patch(id, { ...patch, searchText: buildSearchText({ ...(doc as any), ...patch }) });
     return { ok: true, patched: true } as const;
   },
 });
 
-/* ---------- queries ---------- */
+/* ---------- processing queue ---------- */
 
 /**
- * @deprecated Superseded by `searchIndexed`, which uses the by_localEmbedding
- * vector index. This version collects every capture for the user and scores it
- * in JS, which is O(n) per keystroke and will exceed Convex read limits once a
- * library grows past a few thousand items. Kept only for comparison.
- *
- * Semantic search across ALL capture types using localEmbedding vectors.
+ * The caller's oldest pending captures. Ids and kinds only: the worker
+ * subscribes to this, and the payload it needs comes with the claim.
  */
-export const searchByVector = query({
-  args: {
-    vector: v.array(v.float64()),
-    limit: v.optional(v.number()),
-    minScore: v.optional(v.number()),
-  },
-  handler: async (ctx, { vector, limit, minScore: argMinScore }) => {
+export const listPendingCaptures = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { results: [] as any[] };
-
-    const take = Math.max(1, Math.min(100, limit ?? 30));
-    const minScore = Math.max(-1, Math.min(1, argMinScore ?? 0.18));
-
-    const all = await ctx.db
+    if (!identity) return { items: [] as Array<{ id: Id<"captures">; kind: string }> };
+    const take = Math.max(1, Math.min(20, limit ?? 5));
+    const rows = await ctx.db
       .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-      .collect();
+      .withIndex("by_user_status", (q) => q.eq("userId", identity.subject).eq("status", "pending"))
+      .take(take);
+    return { items: rows.map((d) => ({ id: d._id, kind: d.kind as string })) };
+  },
+});
 
-    // 1. Score every document that has a local embedding. Keep the unfiltered
-    //    ranking around so the diagnostics below can show what a query actually
-    //    scored, including the matches that minScore rejected.
-    const ranked = all
-      .filter(
-        (d: any) =>
-          Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0
-      )
-      .map((d: any) => ({
-        doc: d,
-        score: cosineSimilarity(d.localEmbedding as number[], vector),
-      }))
-      .filter((x) => Number.isFinite(x.score))
-      .sort((a, b) => b.score - a.score);
+/** Unique enough per claim; Convex seeds Math.random per mutation. */
+function newClaimToken(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
-    const allScored = ranked.filter((x) => x.score >= minScore);
+/**
+ * Give up a claim: back to `pending` while attempts remain (the retry),
+ * otherwise `failed`. Clearing `aiClaim` voids the old worker's token.
+ */
+async function releaseClaim(ctx: MutationCtx, doc: Doc<"captures">, error: string): Promise<boolean> {
+  const retry = (doc.aiAttempts ?? 1) < AI_MAX_ATTEMPTS;
+  await ctx.db.patch(doc._id, {
+    status: retry ? "pending" : "failed",
+    error: error.slice(0, MAX_ERROR_LENGTH) || "Unknown error",
+    aiStartedAt: undefined,
+    aiClaim: undefined,
+  });
+  return retry;
+}
 
-    // 2. Adaptive threshold: only keep results within 75% of the top score.
-    //    This prevents low-relevance items from appearing when there are
-    //    clearly better matches (e.g. top=0.32, cutoff=0.24).
-    // Only meaningful once there is a real spread to compare against; with one
-    // or two candidates the top score is trivially within ratio of itself, so
-    // the filter does nothing except hide the fact that the pool is tiny.
-    const ADAPTIVE_RATIO = 0.65;
-    const ADAPTIVE_MIN_CANDIDATES = 3;
-    const topScore = allScored.length > 0 ? allScored[0]!.score : 0;
-    const adaptiveMin =
-      allScored.length >= ADAPTIVE_MIN_CANDIDATES ? topScore * ADAPTIVE_RATIO : -1;
+/** Whether a `processing` claim is old enough to be presumed abandoned. */
+function isStaleClaim(doc: Doc<"captures">): boolean {
+  return (doc.aiStartedAt ?? 0) <= Date.now() - AI_STALE_PROCESSING_MS;
+}
 
-    const scored = allScored
-      .filter((x) => x.score >= adaptiveMin)
-      .slice(0, take);
+/**
+ * Take a pending capture for processing. Only succeeds while it is still
+ * `pending`, so two workers (two browsers on one account) never both run it.
+ * Returns a claim token (quoted back with the result) and what the worker
+ * needs to embed and tag the capture. A release is scheduled for when the
+ * claim goes stale, so a worker that dies mid-way never strands it.
+ */
+export const claimCapture = mutation({
+  args: { id: v.id("captures") },
+  handler: async (ctx, { id }) => {
+    const doc = (await ownCapture(ctx, id)) as any;
+    if (doc.status !== "pending") return { claimed: false as const, claim: null, item: null };
 
-    // Pre-filter picture of the corpus: how many vectors were even eligible,
-    // and what the best raw scores were. Without this a zero-result search is
-    // indistinguishable from "threshold too high".
-    const diagnostics = {
-      totalForUser: all.length,
-      withEmbedding: all.filter(
-        (d: any) => Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0
-      ).length,
-      passedMinScore: allScored.length,
-      minScore,
-      adaptiveMin,
-      topScores: ranked.slice(0, 5).map((x) => ({
-        score: Number(x.score.toFixed(4)),
-        kind: x.doc.kind,
-        title: x.doc.title ?? x.doc.alt ?? x.doc.url ?? null,
-      })),
+    const claim = newClaimToken();
+    await ctx.db.patch(id, {
+      status: "processing",
+      aiAttempts: (doc.aiAttempts ?? 0) + 1,
+      aiStartedAt: Date.now(),
+      aiClaim: claim,
+    });
+    await ctx.scheduler.runAfter(AI_STALE_PROCESSING_MS, internal.local_ai.releaseStaleClaim, { id, claim });
+
+    const visual = isVisualKind(doc.kind);
+    const storageUrl = visual && doc.storageId ? await ctx.storage.getUrl(doc.storageId) : null;
+    const thumbUrl = visual && doc.thumbStorageId ? await ctx.storage.getUrl(doc.thumbStorageId) : null;
+    const backgroundHexes: string[] = (doc.designDna?.colors ?? [])
+      .filter((c: any) => c.usage === "background")
+      .sort((a: any, b: any) => b.weight - a.weight)
+      .map((c: any) => c.hex);
+
+    return {
+      claimed: true as const,
+      claim,
+      item: {
+        id: doc._id as Id<"captures">,
+        kind: doc.kind as string,
+        visual,
+        /** Grid thumbnail; embedding it is cheaper and CLIP resizes to 224px anyway. */
+        thumbUrl,
+        imageUrl: storageUrl ?? (visual ? doc.src || null : null),
+        text: visual ? null : embeddableText(doc),
+        palette: (doc.palette ?? null) as Array<{ hex: string; lab: number[]; weight: number }> | null,
+        backgroundHexes,
+        width: (doc.width ?? null) as number | null,
+        height: (doc.height ?? null) as number | null,
+      },
     };
-
-    const results = await Promise.all(
-      scored.map(async ({ doc, score }: { doc: any; score: number }) => {
-        let imageUrl: string | null = null;
-        if (VISUAL_KINDS.has(doc.kind) && doc.storageId) {
-          imageUrl = await ctx.storage.getUrl(doc.storageId);
-        }
-        return {
-          id: doc._id,
-          kind: doc.kind as string,
-          score,
-          imageUrl,
-          pageUrl: doc.url ?? null,
-          title: doc.title ?? doc.alt ?? null,
-          alt: doc.alt ?? null,
-          tags: doc.tags ?? [],
-          category: doc.category ?? null,
-          width: doc.width ?? null,
-          height: doc.height ?? null,
-          storageId: doc.storageId ?? null,
-          // text / code
-          content: doc.content ?? null,
-          // link
-          href: doc.href ?? null,
-          text: doc.text ?? null,
-          linkPreviewId: doc.linkPreviewId ?? null,
-        };
-      })
-    );
-
-    return { results, diagnostics } as const;
   },
 });
 
 /**
- * Diagnostic: how much of this user's data is actually reachable by
- * searchByVector. Anything without a localEmbedding is invisible to search,
- * so a low `withLocalEmbedding` count relative to `total` means the corpus
- * needs backfilling, not that the scoring is wrong.
+ * Scheduled by claimCapture: release the claim if that same claim still
+ * holds the capture once it has gone stale. Anything else (finished,
+ * failed, re-queued, re-claimed, deleted) is left alone.
+ */
+export const releaseStaleClaim = internalMutation({
+  args: { id: v.id("captures"), claim: v.string() },
+  handler: async (ctx, { id, claim }) => {
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.status !== "processing" || doc.aiClaim !== claim) return { released: false };
+    await releaseClaim(ctx, doc, "Processing was interrupted");
+    return { released: true };
+  },
+});
+
+/** Store the results of a claimed capture and mark it `ready`. */
+export const completeProcessing = mutation({
+  args: {
+    id: v.id("captures"),
+    /** Token from claimCapture; a stale worker's result is refused. */
+    claim: v.string(),
+    localEmbedding: v.optional(v.array(v.float64())),
+    textEmbedding: v.optional(v.array(v.float64())),
+    aiCategory: v.optional(aiCategoryValidator),
+    aiStyle: v.optional(v.array(v.string())),
+    aiTags: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { id, claim, localEmbedding, textEmbedding, aiCategory, aiStyle, aiTags }) => {
+    const doc = await ownCapture(ctx, id);
+    // Released, retried or re-claimed meanwhile: this result is stale.
+    if (doc.status !== "processing" || doc.aiClaim !== claim) {
+      return { ok: false as const, reason: "claim no longer held" };
+    }
+
+    assertLocalEmbedding(localEmbedding, "localEmbedding");
+    assertLocalEmbedding(textEmbedding, "textEmbedding");
+    // Each kind lives in exactly one embedding space; see the schema's indexes.
+    const visual = isVisualKind(doc.kind);
+    if (visual && (textEmbedding || !localEmbedding)) {
+      throw new Error("Image captures take localEmbedding, not textEmbedding");
+    }
+    if (!visual && (localEmbedding || !textEmbedding)) {
+      throw new Error("Text captures take textEmbedding, not localEmbedding");
+    }
+
+    const labels = {
+      aiCategory,
+      aiStyle: cleanLabels(aiStyle, MAX_STYLES),
+      aiTags: cleanLabels(aiTags, MAX_AI_TAGS),
+    };
+    await ctx.db.patch(id, {
+      ...(visual ? { localEmbedding } : { textEmbedding }),
+      ...labels,
+      searchText: buildSearchText({ ...(doc as any), ...labels }),
+      status: "ready",
+      error: undefined,
+      aiStartedAt: undefined,
+      aiClaim: undefined,
+    } as any);
+    return { ok: true as const };
+  },
+});
+
+/**
+ * Record a failed attempt. Goes back to `pending` for one automatic retry
+ * (the worker waits a little before taking it again), then `failed`.
+ */
+export const failProcessing = mutation({
+  args: { id: v.id("captures"), claim: v.string(), error: v.string() },
+  handler: async (ctx, { id, claim, error }) => {
+    const doc = await ownCapture(ctx, id);
+    if (doc.status !== "processing" || doc.aiClaim !== claim) return { ok: false as const, retry: false };
+    const retry = await releaseClaim(ctx, doc, error);
+    return { ok: true as const, retry };
+  },
+});
+
+/**
+ * Queue a capture again from the dashboard (after `failed`, or to redo it).
+ * A `processing` capture is only taken back once its claim has gone stale.
+ */
+export const retryProcessing = mutation({
+  args: { captureId: v.id("captures") },
+  handler: async (ctx, { captureId }) => {
+    const doc = await ownCapture(ctx, captureId);
+    // Already queued, or a live worker is on it right now.
+    if (doc.status === "pending" || (doc.status === "processing" && !isStaleClaim(doc))) {
+      return { ok: true as const, queued: false };
+    }
+    await ctx.db.patch(captureId, {
+      status: "pending",
+      aiAttempts: 0,
+      error: undefined,
+      aiStartedAt: undefined,
+      aiClaim: undefined,
+    });
+    return { ok: true as const, queued: true };
+  },
+});
+
+/**
+ * Release the caller's stale claims now, e.g. at worker start after the
+ * previous worker was killed. The scheduled release does the same later.
+ */
+export const recoverStaleProcessing = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    const stuck = await ctx.db
+      .query("captures")
+      .withIndex("by_user_status", (q) => q.eq("userId", identity.subject).eq("status", "processing"))
+      .take(100);
+    let recovered = 0;
+    for (const doc of stuck) {
+      if (!isStaleClaim(doc)) continue;
+      await releaseClaim(ctx, doc, "Processing was interrupted");
+      recovered++;
+    }
+    return { recovered };
+  },
+});
+
+/**
+ * Statuses a capture without an embedding can sit in outside the queue:
+ * never processed (no status), backfilled `skipped`, or `failed`. Failed
+ * last, so a re-index reaches untried captures before retrying failures.
+ */
+const UNINDEXED_STATUSES = [undefined, "skipped", "failed"] as const;
+/** Rows read per status bucket; bounds every scan below. */
+const UNINDEXED_SCAN = 400;
+
+/** The caller's unindexed captures, bounded; `capped` when a bucket was cut off. */
+async function findUnindexed(ctx: QueryCtx, userId: string) {
+  const found: Doc<"captures">[] = [];
+  let capped = false;
+  for (const status of UNINDEXED_STATUSES) {
+    const rows = await ctx.db
+      .query("captures")
+      .withIndex("by_user_status", (q) => q.eq("userId", userId).eq("status", status))
+      .take(UNINDEXED_SCAN);
+    if (rows.length === UNINDEXED_SCAN) capped = true;
+    found.push(...rows.filter((d) => !hasEmbedding(d)));
+  }
+  return { found, capped };
+}
+
+/**
+ * Queue one bounded batch of captures that are not searchable yet (no
+ * embedding for their kind, not already queued). The popup's re-index calls
+ * this repeatedly until `remaining` is 0; the queue does the actual work.
+ */
+export const requeueUnindexed = mutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    const take = Math.max(1, Math.min(200, limit ?? 100));
+    const { found, capped } = await findUnindexed(ctx, identity.subject);
+    const batch = found.slice(0, take);
+    for (const doc of batch) {
+      await ctx.db.patch(doc._id, {
+        status: "pending",
+        aiAttempts: 0,
+        error: undefined,
+        aiStartedAt: undefined,
+        aiClaim: undefined,
+      });
+    }
+    return { requeued: batch.length, remaining: found.length - batch.length, capped };
+  },
+});
+
+/* ---------- diagnostics ---------- */
+
+/**
+ * How much of the caller's library is reachable by vector search. Anything
+ * without the embedding for its kind is found by keywords only.
  */
 export const embeddingStats = query({
   args: {},
@@ -216,6 +383,7 @@ export const embeddingStats = query({
       .collect();
 
     const byKind: Record<string, { total: number; withLocalEmbedding: number }> = {};
+    const byStatus: Record<string, number> = {};
     let withLocalEmbedding = 0;
     let withImageEmbedding = 0;
 
@@ -223,8 +391,10 @@ export const embeddingStats = query({
       const kind = String(d.kind ?? "unknown");
       byKind[kind] ??= { total: 0, withLocalEmbedding: 0 };
       byKind[kind].total++;
+      const status = String(d.status ?? "none");
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
 
-      if (Array.isArray(d.localEmbedding) && d.localEmbedding.length > 0) {
+      if (hasEmbedding(d)) {
         withLocalEmbedding++;
         byKind[kind].withLocalEmbedding++;
       }
@@ -239,199 +409,32 @@ export const embeddingStats = query({
       withImageEmbedding,
       searchable: withLocalEmbedding,
       byKind,
+      byStatus,
     } as const;
   },
 });
 
-/* ---------- indexed vector search ---------- */
-
 /**
- * Hydrate vector-search hits into result rows.
- *
- * ctx.vectorSearch returns only { _id, _score }, and it is only callable from
- * an action, so the documents are loaded here and re-attached to their scores.
- */
-export const hydrateSearchHits = internalQuery({
-  args: {
-    ids: v.array(v.id("captures")),
-    scores: v.array(v.float64()),
-    userId: v.string(),
-  },
-  handler: async (ctx, { ids, scores, userId }) => {
-    const scoreById = new Map<string, number>();
-    ids.forEach((id, i) => scoreById.set(id, scores[i] ?? 0));
-
-    const docs = await Promise.all(ids.map((id) => ctx.db.get(id)));
-
-    const rows = await Promise.all(
-      docs
-        // Defensive: the vector index is filtered by userId, but never return a
-        // row we cannot prove belongs to the caller.
-        .filter((d): d is NonNullable<typeof d> => !!d && (d as any).userId === userId)
-        .map(async (doc: any) => {
-          let imageUrl: string | null = null;
-          if (VISUAL_KINDS.has(doc.kind) && doc.storageId) {
-            imageUrl = await ctx.storage.getUrl(doc.storageId);
-          }
-          return {
-            id: doc._id,
-            kind: doc.kind as string,
-            score: scoreById.get(doc._id) ?? 0,
-            imageUrl,
-            pageUrl: doc.url ?? null,
-            title: doc.title ?? doc.alt ?? null,
-            alt: doc.alt ?? null,
-            tags: doc.tags ?? [],
-            category: doc.category ?? null,
-            width: doc.width ?? null,
-            height: doc.height ?? null,
-            storageId: doc.storageId ?? null,
-            content: doc.content ?? null,
-            href: doc.href ?? null,
-            text: doc.text ?? null,
-            linkPreviewId: doc.linkPreviewId ?? null,
-          };
-        })
-    );
-
-    return rows.sort((a, b) => b.score - a.score);
-  },
-});
-
-/**
- * Semantic search backed by the Convex vector index.
- *
- * Replaces the full-table scan in `searchByVector`, which loaded every capture
- * for the user and scored it in JS on each keystroke.
- */
-export const searchIndexed = action({
-  args: {
-    vector: v.array(v.float64()),
-    limit: v.optional(v.number()),
-    minScore: v.optional(v.number()),
-    minZ: v.optional(v.number()),
-  },
-  handler: async (
-    ctx,
-    { vector, limit, minScore: argMinScore, minZ: argMinZ }
-  ): Promise<{ results: any[]; diagnostics: any }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { results: [], diagnostics: { error: "Unauthorized" } };
-    assertLocalEmbedding(vector, "vector");
-
-    const take = Math.max(1, Math.min(256, limit ?? 30));
-
-    // A floor, not the decision. CLIP text/image cosines are compressed into a
-    // narrow band by the modality gap, so an absolute cutoff cannot separate a
-    // real match from the nearest irrelevant neighbour. It only discards the
-    // obviously hopeless.
-    const minScore = Math.max(-1, Math.min(1, argMinScore ?? 0.15));
-
-    // The actual decision: how far above this query's own score distribution a
-    // result stands. Unlike an absolute threshold, this transfers across
-    // queries, models and library sizes, because it is measured in standard
-    // deviations rather than raw cosine units.
-    const minZ = argMinZ ?? 1.2;
-
-    // Overfetch: the distribution needs enough samples to have a meaningful
-    // mean and spread. Scoring 4 neighbours tells us nothing about what
-    // "unusually close" looks like for this query.
-    const candidateCount = Math.min(256, Math.max(take * 4, 40));
-
-    const hits = await ctx.vectorSearch("captures", "by_localEmbedding", {
-      vector,
-      limit: candidateCount,
-      filter: (q) => q.eq("userId", identity.subject),
-    });
-
-    const scores = hits.map((h) => h._score);
-    const mean =
-      scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-    const variance =
-      scores.length > 1
-        ? scores.reduce((acc, x) => acc + (x - mean) ** 2, 0) / (scores.length - 1)
-        : 0;
-    const std = Math.sqrt(variance);
-
-    // With too few samples, or a degenerate distribution where everything is
-    // equally (dis)similar, there is no outlier to find. Returning the nearest
-    // neighbours anyway is what produced "man eating banana" -> four unrelated
-    // LinkedIn posts.
-    const canUseZ = hits.length >= 8 && std > 1e-6;
-
-    const kept = hits
-      .filter((h) => h._score >= minScore)
-      .filter((h) => (canUseZ ? (h._score - mean) / std >= minZ : true))
-      .slice(0, take);
-
-    const results: any[] = await ctx.runQuery(internal.local_ai.hydrateSearchHits, {
-      ids: kept.map((h) => h._id),
-      scores: kept.map((h) => h._score),
-      userId: identity.subject,
-    });
-
-    return {
-      results,
-      diagnostics: {
-        candidates: hits.length,
-        kept: kept.length,
-        mean: Number(mean.toFixed(4)),
-        std: Number(std.toFixed(4)),
-        minScore,
-        minZ,
-        usedZ: canUseZ,
-        topScores: hits.slice(0, 5).map((h) => ({
-          score: Number(h._score.toFixed(4)),
-          z: std > 1e-6 ? Number(((h._score - mean) / std).toFixed(2)) : null,
-        })),
-      },
-    };
-  },
-});
-
-/* ---------- re-index ---------- */
-
-/**
- * Captures that predate local embeddings, oldest first.
- *
- * Returns a resolved image URL alongside each row so the extension can embed
- * without a second round trip. Paged rather than returning everything, since a
- * large library would otherwise blow the query read limit.
+ * Captures a re-index would queue (no embedding, not queued), for the
+ * popup. Bounded like requeueUnindexed: `remaining` counts at most
+ * UNINDEXED_SCAN rows per status, and `capped` says when it was cut off.
  */
 export const listNeedingEmbedding = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { items: [], remaining: 0 } as const;
+    if (!identity) return { items: [], remaining: 0, capped: false } as const;
 
     const take = Math.max(1, Math.min(50, limit ?? 10));
+    const { found, capped } = await findUnindexed(ctx, identity.subject);
 
-    const all = await ctx.db
-      .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-      .collect();
+    const items = found.slice(0, take).map((d: any) => ({
+      id: d._id as Id<"captures">,
+      kind: d.kind as string,
+      status: (d.status ?? null) as string | null,
+      url: d.url ?? null,
+    }));
 
-    const pending = all.filter(
-      (d: any) => !Array.isArray(d.localEmbedding) || d.localEmbedding.length === 0
-    );
-
-    const items = await Promise.all(
-      pending.slice(0, take).map(async (d: any) => ({
-        id: d._id,
-        kind: d.kind as string,
-        url: d.url ?? null,
-        // Prefer stored bytes over the original src: the source page may be
-        // gone, auth-walled, or hotlink-protected by the time we re-index.
-        imageUrl: d.storageId ? await ctx.storage.getUrl(d.storageId) : (d.src ?? null),
-        width: d.width ?? null,
-        height: d.height ?? null,
-        content: d.content ?? null,
-        text: d.text ?? null,
-        href: d.href ?? null,
-        tags: d.tags ?? [],
-      }))
-    );
-
-    return { items, remaining: pending.length } as const;
+    return { items, remaining: found.length, capped } as const;
   },
 });

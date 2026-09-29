@@ -2,8 +2,8 @@ import { v, type Infer } from "convex/values";
 import { mutation, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { captureValidator, designDnaValidator, paletteColorValidator } from "./schema";
-import { assertLocalEmbedding } from "./helpers";
 import { normalizeCaptureColors } from "./lib/color";
+import { buildSearchText } from "./lib/search_rank";
 
 type DesignDna = Infer<typeof designDnaValidator>;
 type PaletteColor = Infer<typeof paletteColorValidator>;
@@ -95,7 +95,6 @@ async function assertCaptureRefs(
     linkPreviewId?: Id<"link_previews">;
     storageId?: Id<"_storage">;
     thumbStorageId?: Id<"_storage">;
-    localEmbedding?: number[];
   }
 ) {
   if (refs.sessionId) {
@@ -114,7 +113,6 @@ async function assertCaptureRefs(
       throw new Error("Storage object already in use");
     }
   }
-  assertLocalEmbedding(refs.localEmbedding);
 }
 
 export const uploadCapture = mutation({
@@ -130,6 +128,8 @@ export const uploadCapture = mutation({
     // session's itemCount in step; accepting it here would bypass that count.
     // Image-derived fields (DNA, palette, thumbnail) only come through
     // saveImageCapture, which validates them and indexes the colours.
+    // Embeddings and AI fields are written only by the processing queue
+    // (local_ai.completeProcessing), after the capture is claimed.
     const {
       userId: _userId,
       status: _status,
@@ -138,28 +138,41 @@ export const uploadCapture = mutation({
       designDna: _designDna,
       palette: _palette,
       thumbStorageId: _thumbStorageId,
+      localEmbedding: _localEmbedding,
+      textEmbedding: _textEmbedding,
+      imageEmbedding: _imageEmbedding,
+      aiAttempts: _aiAttempts,
+      aiStartedAt: _aiStartedAt,
+      aiCategory: _aiCategory,
+      aiStyle: _aiStyle,
+      aiTags: _aiTags,
+      aiDescription: _aiDescription,
+      aiClaim: _aiClaim,
+      searchText: _searchText,
       ...rest
     } = capture as typeof capture & {
       designDna?: unknown;
       palette?: unknown;
       thumbStorageId?: unknown;
+      localEmbedding?: unknown;
+      textEmbedding?: unknown;
+      imageEmbedding?: unknown;
     };
     const c = rest as {
       linkPreviewId?: Id<"link_previews">;
       storageId?: Id<"_storage">;
-      localEmbedding?: number[];
       category?: string;
     };
     await assertCaptureRefs(ctx, identity.subject, {
       linkPreviewId: c.linkPreviewId,
       storageId: c.storageId,
-      localEmbedding: c.localEmbedding,
     });
     return await ctx.db.insert("captures", {
       ...rest,
       category: c.category ?? "unsorted",
       userId: identity.subject,
       status: "pending",
+      searchText: buildSearchText(rest as any),
     });
   },
 });
@@ -228,16 +241,17 @@ export const saveImageCapture = mutation({
       userId: identity.subject,
       status: "pending" as const,
     };
+    const searchText = buildSearchText(common);
 
     let captureId: Id<"captures">;
     if (kind === "element") {
-      captureId = await ctx.db.insert("captures", { ...common, kind: "element", tagName, clipped, designDna });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "element", tagName, clipped, designDna });
     } else if (kind === "viewport") {
-      captureId = await ctx.db.insert("captures", { ...common, kind: "viewport", clipped });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "viewport", clipped });
     } else if (kind === "screenshot") {
-      captureId = await ctx.db.insert("captures", { ...common, kind: "screenshot", src: src ?? "" });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "screenshot", src: src ?? "" });
     } else {
-      captureId = await ctx.db.insert("captures", { ...common, kind: "image", src: src ?? "" });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "image", src: src ?? "" });
     }
 
     // Colours are indexed server-side from what was just validated, so the

@@ -1,10 +1,12 @@
 import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
+import { LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
 
 /**
  * Where a capture is in the enrichment pipeline. New captures start as
- * `pending`; captures that predate the pipeline are backfilled to `skipped` so
- * they are never processed (and never billed) retroactively.
+ * `pending`; the extension's queue claims them (`processing`), embeds and
+ * tags them locally, and marks them `ready`, or `failed` after its retries.
+ * Captures that predate the pipeline were backfilled to `skipped`.
  */
 export const captureStatusValidator = v.union(
   v.literal("pending"),
@@ -72,12 +74,67 @@ const imageDerivedFields = {
   thumbStorageId: v.optional(v.id("_storage")),
 };
 
+/** Spec `category`: exactly one per analysed image capture; `other` when unsure. */
+export const aiCategoryValidator = v.union(
+  v.literal("hero"),
+  v.literal("navigation"),
+  v.literal("pricing"),
+  v.literal("features"),
+  v.literal("testimonials"),
+  v.literal("cta"),
+  v.literal("form"),
+  v.literal("card"),
+  v.literal("footer"),
+  v.literal("dashboard"),
+  v.literal("illustration"),
+  v.literal("photo"),
+  v.literal("typography"),
+  v.literal("icon"),
+  v.literal("other")
+);
+
+export type AiCategory = Infer<typeof aiCategoryValidator>;
+
 /** Fields every capture kind carries, whatever it holds. */
 const commonCaptureFields = {
   status: v.optional(captureStatusValidator),
-  /** Last enrichment error, when `status` is `failed`. */
+  /** Last enrichment error; kept while a retry is pending, cleared on success. */
   error: v.optional(v.string()),
+  /** Enrichment attempts since the capture was (re)queued. */
+  aiAttempts: v.optional(v.number()),
+  /** When the current `processing` claim was taken, to spot abandoned ones. */
+  aiStartedAt: v.optional(v.float64()),
+  /**
+   * Token of the current claim. Results and failures must quote it, so a
+   * worker whose claim was released (and re-claimed) cannot overwrite the
+   * newer attempt.
+   */
+  aiClaim: v.optional(v.string()),
+  /**
+   * Zero-shot results, kept apart from the user's own `tags` so the model
+   * never overwrites what the user chose. Image kinds only for now.
+   */
+  aiCategory: v.optional(aiCategoryValidator),
+  /** 1-4 style labels, e.g. minimal, dark, gradient. */
+  aiStyle: v.optional(v.array(v.string())),
+  /** 5-10 short lowercase descriptive tags. */
+  aiTags: v.optional(v.array(v.string())),
+  /** Spec's ai_description. Not generated yet (no local captioner). */
+  aiDescription: v.optional(v.string()),
+  /**
+   * Tokenized words of the searchable fields (lib/search_rank
+   * buildSearchText), for the `search_text` full-text index. Server-owned:
+   * recomputed on every write to those fields.
+   */
+  searchText: v.optional(v.string()),
 };
+
+/**
+ * Text-space vector for text / link / code captures. Kept in its own field
+ * (and index) because CLIP text->text cosines run far higher than
+ * text->image ones: in one index, text captures crowd out every image.
+ */
+const textVectorField = { textEmbedding: v.optional(v.array(v.float64())) };
 
 export const captureValidator = v.union(
   v.object({
@@ -105,7 +162,7 @@ export const captureValidator = v.union(
   v.object({
     kind: v.literal("text"),
     content: v.string(),
-    localEmbedding: v.optional(v.array(v.float64())),
+    ...textVectorField,
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
@@ -121,7 +178,7 @@ export const captureValidator = v.union(
     kind: v.literal("link"),
     href: v.string(),
     text: v.optional(v.string()),
-    localEmbedding: v.optional(v.array(v.float64())),
+    ...textVectorField,
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
@@ -137,7 +194,7 @@ export const captureValidator = v.union(
   v.object({
     kind: v.literal("code"),
     content: v.string(),
-    localEmbedding: v.optional(v.array(v.float64())),
+    ...textVectorField,
     url: v.string(),
     timestamp: v.float64(),
     category: v.optional(v.string()),
@@ -232,15 +289,30 @@ export default defineSchema({
     .index("by_user_category_and_kind", ["userId", "category", "kind"])
     .index("by_user_and_kind", ["userId", "kind"])
     .index("by_user_session", ["userId", "sessionId"])
+    // The enrichment queue: a user's pending captures, oldest first.
+    .index("by_user_status", ["userId", "status"])
     // Lets a save refuse a storage object another capture already points at.
     .index("by_storageId", ["storageId"])
     // Same guard for thumbnails.
     .index("by_thumbStorageId", ["thumbStorageId"])
-    // CLIP ViT-B/32 projection dimension. Scoping the index by userId keeps
-    // one user's vectors out of another's result set at the index level.
+    // Two indexes, one per embedding space: image captures (localEmbedding)
+    // and text captures (textEmbedding). A `kind` filter field on one index
+    // would not do: Convex vector filters cannot AND two fields, so scoping
+    // by userId and kind at once is impossible. Scoping by userId keeps one
+    // user's vectors out of another's results at the index level.
     .vectorIndex("by_localEmbedding", {
       vectorField: "localEmbedding",
-      dimensions: 512,
+      dimensions: LOCAL_EMBEDDING_DIM,
+      filterFields: ["userId"],
+    })
+    .vectorIndex("by_textEmbedding", {
+      vectorField: "textEmbedding",
+      dimensions: LOCAL_EMBEDDING_DIM,
+      filterFields: ["userId"],
+    })
+    // Keyword retrieval for search, so it never scans the whole library.
+    .searchIndex("search_text", {
+      searchField: "searchText",
       filterFields: ["userId"],
     }),
   link_previews: defineTable({

@@ -1,18 +1,22 @@
 import { type Infer } from "convex/values";
 import { captureValidator } from "./schema";
+import { LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
 
 export type Capture = Infer<typeof captureValidator>;
 
 /* ---------- local embeddings ---------- */
 
-/** CLIP ViT-B/32 projection size; must match the by_localEmbedding vector index. */
-export const LOCAL_EMBEDDING_DIM = 512;
+/** The local model's projection size; both vector indexes use it. Set in lib/ai_config. */
+export { LOCAL_EMBEDDING_DIM };
 
 /** Reject a vector the vector index would refuse (or silently mis-score). */
 export function assertLocalEmbedding(vector: number[] | undefined, what = "localEmbedding") {
   if (vector === undefined) return;
   if (vector.length !== LOCAL_EMBEDDING_DIM) {
     throw new Error(`${what} must have ${LOCAL_EMBEDDING_DIM} dimensions, got ${vector.length}`);
+  }
+  if (!vector.every(Number.isFinite)) {
+    throw new Error(`${what} must contain only finite numbers`);
   }
 }
 

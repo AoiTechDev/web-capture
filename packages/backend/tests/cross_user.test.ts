@@ -36,11 +36,19 @@ const CASES: Case[] = [
   { name: "links.enrichLinkPreviewForCapture", kind: "action", fn: api.links.enrichLinkPreviewForCapture, args: (a) => ({ captureId: a.linkId }) },
   { name: "links.getByUserAndCanonicalUrl", kind: "query", fn: api.links.getByUserAndCanonicalUrl, args: () => ({ canonicalUrl: "https://example.com/A" }) },
   // local_ai
-  { name: "local_ai.patchLocalEmbedding", kind: "mutation", fn: api.local_ai.patchLocalEmbedding, args: (a) => ({ id: a.linkId, localEmbedding: vec(512, 0.9) }) },
   { name: "local_ai.applyAutoMetadata", kind: "mutation", fn: api.local_ai.applyAutoMetadata, args: (a) => ({ id: a.linkId, tags: ["pwned"], domain: "evil" }) },
-  { name: "local_ai.searchByVector", kind: "query", fn: api.local_ai.searchByVector, args: () => ({ vector: vec(512), minScore: -1 }) },
+  { name: "local_ai.listPendingCaptures", kind: "query", fn: api.local_ai.listPendingCaptures, args: () => ({ limit: 20 }) },
+  { name: "local_ai.claimCapture", kind: "mutation", fn: api.local_ai.claimCapture, args: (a) => ({ id: a.linkId }) },
+  { name: "local_ai.completeProcessing", kind: "mutation", fn: api.local_ai.completeProcessing, args: (a) => ({ id: a.linkId, claim: "forged", textEmbedding: vec(512, 0.9), aiTags: ["pwned"] }) },
+  { name: "local_ai.failProcessing", kind: "mutation", fn: api.local_ai.failProcessing, args: (a) => ({ id: a.linkId, claim: "forged", error: "pwned" }) },
+  { name: "local_ai.retryProcessing", kind: "mutation", fn: api.local_ai.retryProcessing, args: (a) => ({ captureId: a.shotId }) },
+  { name: "local_ai.recoverStaleProcessing", kind: "mutation", fn: api.local_ai.recoverStaleProcessing, args: () => ({}) },
+  { name: "local_ai.requeueUnindexed", kind: "mutation", fn: api.local_ai.requeueUnindexed, args: () => ({ limit: 500 }) },
   { name: "local_ai.listNeedingEmbedding", kind: "query", fn: api.local_ai.listNeedingEmbedding, args: () => ({ limit: 50 }) },
   { name: "local_ai.embeddingStats", kind: "query", fn: api.local_ai.embeddingStats, args: () => ({}) },
+  // search
+  { name: "search.searchCaptures", kind: "action", fn: api.search.searchCaptures, args: () => ({ query: "secret link example page", folder: "unsorted" }) },
+  { name: "search.searchCapturesFallback", kind: "query", fn: api.search.searchCapturesFallback, args: () => ({ q: "link" }) },
   // link_search
   { name: "link_search.searchLinks", kind: "query", fn: api.link_search.searchLinks, args: () => ({ q: "secret example link" }) },
 ];
