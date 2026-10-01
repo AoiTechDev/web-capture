@@ -52,8 +52,6 @@
       "offscreen"
     ],
     "host_permissions": [
-      "$CLERK_FRONTEND_API/*",
-      "$PLASMO_PUBLIC_CLERK_SYNC_HOST/*",
       "<all_urls>"
     ],
     "key": "$CRX_PUBLIC_KEY",
@@ -62,7 +60,7 @@
     },
     "externally_connectable": {
       "matches": [
-        "$PLASMO_PUBLIC_CLERK_SYNC_HOST/*"
+        "http://localhost/*"
       ]
     }
   }
