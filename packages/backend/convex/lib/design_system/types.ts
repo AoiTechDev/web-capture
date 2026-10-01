@@ -52,7 +52,7 @@ export type DesignSystemTokens = {
 
 /** A colour pair the generator or editor checks against WCAG AA. */
 export type ContrastCheck = {
-  pair: "text/background" | "textMuted/background" | "text/surface" | "primary/background";
+  pair: "text/background" | "textMuted/background" | "text/surface" | "textMuted/surface" | "primary/background";
   foreground: string;
   background: string;
   ratio: number;
@@ -60,3 +60,9 @@ export type ContrastCheck = {
   required: number;
   passes: boolean;
 };
+
+/**
+ * `data` of the ConvexError design_systems.save throws when the row was
+ * regenerated after the editor loaded it (its expectedGeneratedAt is stale).
+ */
+export const REGENERATED_ELSEWHERE = "Regenerated elsewhere";

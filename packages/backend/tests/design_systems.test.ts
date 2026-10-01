@@ -2,10 +2,12 @@
  * design_systems.ts: eligibility, generate, getForSession and save, owner
  * checks and cross-user isolation.
  */
+import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { checkContrast } from "../convex/lib/design_system/contrast";
+import { REGENERATED_ELSEWHERE } from "../convex/lib/design_system/types";
 import { validateTokens } from "../convex/lib/design_system/validate";
 import { LIGHT_SAAS, designDna, palette, seedFixtureSession } from "./design_system_fixtures";
 import { makeT, userA, userB, type T } from "./fixtures";
@@ -43,6 +45,12 @@ describe("design_systems.eligibility", () => {
     expect(await asA.query(api.design_systems.eligibility, { sessionId })).toEqual({ eligible: false, count: 4, need: 5 });
     await addCapture(t, sessionId, { palette: palette([["#ffffff", 0.8], ["#111111", 0.2]]) });
     expect(await asA.query(api.design_systems.eligibility, { sessionId })).toEqual({ eligible: true, count: 5, need: 5 });
+  });
+
+  test("stops reading once it has 5: count is exact below, 5 at or above", async () => {
+    const t = makeT();
+    const sessionId = await sessionWith(t, 7);
+    expect(await t.withIdentity(userA).query(api.design_systems.eligibility, { sessionId })).toEqual({ eligible: true, count: 5, need: 5 });
   });
 
   test("signed out or another user's session: ineligible, count 0", async () => {
@@ -86,9 +94,14 @@ describe("design_systems.generate", () => {
     expect(row.contrast.every((c) => c.passes)).toBe(true);
     expect(row.description).toMatch(/^Light theme · indigo primary/);
     expect(Array.isArray(row.notes)).toBe(true);
+    // Only what the editor needs: no owner or session ids.
+    expect(Object.keys(row).sort()).toEqual([
+      "_id", "contrast", "description", "edited", "generatedAt", "generatedTokens",
+      "notes", "sourceCount", "sourceDomains", "tokens", "updatedAt",
+    ]);
+    const stored = (await t.run((ctx) => ctx.db.get(row._id)))!;
+    expect(stored).toMatchObject({ userId: userA.subject, sessionId });
     expect(row).toMatchObject({
-      userId: userA.subject,
-      sessionId,
       edited: false,
       sourceCount: 8,
       sourceDomains: ["acme-saas.com", "inspo.example"],
@@ -127,12 +140,14 @@ describe("design_systems.generate", () => {
     const row = (await asA.query(api.design_systems.getForSession, { sessionId }))!;
     const edited = structuredClone(row.tokens);
     edited.typography.fontBody = "Lato";
-    await asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: edited });
+    await asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: edited, expectedGeneratedAt: row.generatedAt });
     const again = await asA.mutation(api.design_systems.generate, { sessionId });
     expect(again).toEqual(first);
     const after = (await asA.query(api.design_systems.getForSession, { sessionId }))!;
     expect(after.edited).toBe(false);
     expect(after.tokens).toEqual(row.tokens);
+    // Strictly later, even within the same millisecond.
+    expect(after.generatedAt).toBeGreaterThan(row.generatedAt);
     expect(await t.run((ctx) => ctx.db.query("designSystems").collect())).toHaveLength(1);
   });
 
@@ -168,7 +183,7 @@ describe("design_systems.save / getForSession", () => {
     tokens.colors.textMuted = "#cccccc";
     tokens.colors.primary["500"] = "#FF8800";
     const asA = t.withIdentity(userA);
-    const { contrast } = await asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens });
+    const { contrast } = await asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens, expectedGeneratedAt: row.generatedAt });
     const muted = contrast.find((c) => c.pair === "textMuted/background")!;
     expect(muted).toMatchObject({ foreground: "#cccccc", passes: false });
     const after = (await asA.query(api.design_systems.getForSession, { sessionId }))!;
@@ -187,13 +202,36 @@ describe("design_systems.save / getForSession", () => {
     const asA = t.withIdentity(userA);
     const bad = structuredClone(row.tokens) as any;
     bad.typography.fontHeading = 'Inter"; } :root { --x: url(evil)';
-    await expect(asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: bad })).rejects.toThrow(
+    await expect(asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: bad, expectedGeneratedAt: row.generatedAt })).rejects.toThrow(
       /Invalid design system tokens: typography.fontHeading/
     );
-    await expect(asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: { ...row.tokens, extra: true } })).rejects.toThrow(
+    await expect(
+      asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens: { ...row.tokens, extra: true }, expectedGeneratedAt: row.generatedAt })
+    ).rejects.toThrow(
       /not a known key/
     );
     expect(await asA.query(api.design_systems.getForSession, { sessionId })).toEqual(row);
+  });
+
+  test("a save made on an older generation is refused until re-sent with the new generatedAt", async () => {
+    const t = makeT();
+    const { sessionId, row } = await generated(t);
+    const asA = t.withIdentity(userA);
+    await asA.mutation(api.design_systems.generate, { sessionId });
+    const regenerated = (await asA.query(api.design_systems.getForSession, { sessionId }))!;
+    const tokens = structuredClone(row.tokens);
+    tokens.typography.fontBody = "Lato";
+    const stale = asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens, expectedGeneratedAt: row.generatedAt });
+    const error = await stale.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConvexError);
+    // convex-test hands `data` over JSON-encoded; the Convex client decodes it to the plain string.
+    expect(JSON.parse((error as ConvexError<string>).data)).toBe(REGENERATED_ELSEWHERE);
+    expect(await asA.query(api.design_systems.getForSession, { sessionId })).toEqual(regenerated);
+    // "Keep mine": re-save against the generation now stored.
+    await asA.mutation(api.design_systems.save, { designSystemId: row._id, tokens, expectedGeneratedAt: regenerated.generatedAt });
+    const kept = (await asA.query(api.design_systems.getForSession, { sessionId }))!;
+    expect(kept.tokens.typography.fontBody).toBe("Lato");
+    expect(kept.edited).toBe(true);
   });
 
   test("another user can neither read nor save it", async () => {
@@ -202,10 +240,12 @@ describe("design_systems.save / getForSession", () => {
     const asB = t.withIdentity(userB);
     expect(await asB.query(api.design_systems.getForSession, { sessionId })).toBeNull();
     expect(await t.query(api.design_systems.getForSession, { sessionId })).toBeNull();
-    await expect(asB.mutation(api.design_systems.save, { designSystemId: row._id, tokens: row.tokens })).rejects.toThrow(
+    await expect(asB.mutation(api.design_systems.save, { designSystemId: row._id, tokens: row.tokens, expectedGeneratedAt: row.generatedAt })).rejects.toThrow(
       /Not found or forbidden/
     );
-    await expect(t.mutation(api.design_systems.save, { designSystemId: row._id, tokens: row.tokens })).rejects.toThrow(/Unauthorized/);
+    await expect(t.mutation(api.design_systems.save, { designSystemId: row._id, tokens: row.tokens, expectedGeneratedAt: row.generatedAt })).rejects.toThrow(
+      /Unauthorized/
+    );
     expect(await t.withIdentity(userA).query(api.design_systems.getForSession, { sessionId })).toEqual(row);
   });
 
@@ -217,7 +257,7 @@ describe("design_systems.save / getForSession", () => {
     expect(await t.withIdentity(userB).query(api.design_systems.getForSession, { sessionId: b })).toBeNull();
     await t.withIdentity(userB).mutation(api.design_systems.generate, { sessionId: b });
     const rowB = (await t.withIdentity(userB).query(api.design_systems.getForSession, { sessionId: b }))!;
-    expect(rowB.userId).toBe(userB.subject);
+    expect((await t.run((ctx) => ctx.db.get(rowB._id)))!.userId).toBe(userB.subject);
     expect(await t.run((ctx) => ctx.db.query("designSystems").collect())).toHaveLength(2);
   });
 });

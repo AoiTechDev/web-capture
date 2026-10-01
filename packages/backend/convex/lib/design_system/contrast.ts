@@ -34,6 +34,8 @@ export function contrastRatio(fgHex: string, bgHex: string): number {
 /** Text pairs need 4.5:1 (AA body text); primary on background 3:1 (AA large text, UI). */
 export const TEXT_CONTRAST = 4.5;
 export const PRIMARY_CONTRAST = 3;
+/** Muted text closer than this to text is noted as indistinguishable from it. */
+export const MUTED_DISTINCT = 1.3;
 
 type Pair = ContrastCheck["pair"];
 
@@ -43,12 +45,13 @@ function pairsOf(tokens: DesignSystemTokens): { pair: Pair; fg: string; bg: stri
     { pair: "text/background", fg: c.text, bg: c.background, required: TEXT_CONTRAST },
     { pair: "textMuted/background", fg: c.textMuted, bg: c.background, required: TEXT_CONTRAST },
     { pair: "text/surface", fg: c.text, bg: c.surface, required: TEXT_CONTRAST },
+    { pair: "textMuted/surface", fg: c.textMuted, bg: c.surface, required: TEXT_CONTRAST },
     { pair: "primary/background", fg: c.primary["500"], bg: c.background, required: PRIMARY_CONTRAST },
   ];
 }
 
 /**
- * The four checked pairs. `ratio` is floored to two decimals, so a ratio
+ * The five checked pairs. `ratio` is floored to two decimals, so a ratio
  * shown as 4.5 always passes and 4.49 never does.
  */
 export function checkContrast(tokens: DesignSystemTokens): ContrastCheck[] {
@@ -102,12 +105,13 @@ const fmt = (ratio: number) => (Math.floor(ratio * 10) / 10).toFixed(1);
  * Tokens with every failing pair corrected by lightness, plus a note for each
  * change. The input is not modified.
  *
- * Text is fixed against the background and then the surface (moving it
- * further from both); textMuted only as far as it must, so it stays muted;
+ * Text and textMuted are fixed against the background first (textMuted only
+ * as far as it must, so it stays muted). Black or white reaches at least
+ * 4.58:1 (√21) on any background, so that fix always exists and the
+ * background is never moved. Against the surface they are only moved when
+ * that keeps them passing on the background; otherwise (a surface on their
+ * far side) the surface is moved towards the background's lightness.
  * primary-500 is moved and its scale rebuilt around it, so the hue holds.
- * Black or white reaches at least 4.58:1 (√21) on any background, so a
- * text fix always exists and the background is never moved; only a surface
- * on the far side of the text from the background is.
  */
 export function fixContrast(tokens: DesignSystemTokens): { tokens: DesignSystemTokens; notes: string[] } {
   const out: DesignSystemTokens = structuredClone(tokens);
@@ -119,25 +123,43 @@ export function fixContrast(tokens: DesignSystemTokens): { tokens: DesignSystemT
     if (before >= TEXT_CONTRAST) return;
     const fixed = adjustLightness(c[role], c[on], TEXT_CONTRAST);
     if (!fixed) return;
+    if (on === "surface" && contrastRatio(fixed, c.background) < TEXT_CONTRAST) return;
     c[role] = fixed;
     const where = on === "surface" ? " on surface" : "";
     notes.push(`Raised ${role} contrast${where} from ${fmt(before)}:1 to ${fmt(contrastRatio(fixed, c[on]))}:1`);
   };
 
   fix("text", "background");
-  fix("text", "surface");
-  // A surface on the far side of the text could pull it back below on the background.
-  fix("text", "background");
-  const surfaceBefore = contrastRatio(c.text, c.surface);
-  if (surfaceBefore < TEXT_CONTRAST) {
-    // Text cannot satisfy both: move the surface away from the text instead.
-    const moved = adjustLightness(c.surface, c.text, TEXT_CONTRAST);
-    if (moved) {
-      c.surface = moved;
-      notes.push(`Moved surface lightness for text contrast from ${fmt(surfaceBefore)}:1 to ${fmt(contrastRatio(c.text, moved))}:1`);
-    }
-  }
   fix("textMuted", "background");
+  fix("text", "surface");
+  fix("textMuted", "surface");
+  const surfaceOk = (hex: string) =>
+    contrastRatio(c.text, hex) >= TEXT_CONTRAST && contrastRatio(c.textMuted, hex) >= TEXT_CONTRAST;
+  if (!surfaceOk(c.surface)) {
+    // Both colours already clear the background, so a surface at its
+    // lightness clears them too: move the least distance towards it.
+    const before = c.surface;
+    const s = hexToOklch(c.surface)!;
+    const bgL = hexToOklch(c.background)!.l;
+    const at = (t: number) => oklchToHex({ ...s, l: s.l + (bgL - s.l) * t });
+    let moved = c.background;
+    if (surfaceOk(at(1))) {
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 30; i++) {
+        const mid = (lo + hi) / 2;
+        if (surfaceOk(at(mid))) hi = mid;
+        else lo = mid;
+      }
+      moved = at(hi);
+    }
+    c.surface = moved;
+    notes.push(`Moved surface ${before} to ${moved} so text and muted text both reach 4.5:1 on it`);
+  }
+  const mutedVsText = contrastRatio(c.textMuted, c.text);
+  if (mutedVsText < MUTED_DISTINCT) {
+    notes.push(`textMuted is barely distinguishable from text (${fmt(mutedVsText)}:1)`);
+  }
 
   const primaryBefore = contrastRatio(c.primary["500"], c.background);
   if (primaryBefore < PRIMARY_CONTRAST) {

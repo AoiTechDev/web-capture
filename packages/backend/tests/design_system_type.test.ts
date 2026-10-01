@@ -3,7 +3,7 @@
  * radius, shadows, the shared scale builders and the template description.
  */
 import { describe, expect, test } from "vitest";
-import { radiusScale, rem, spacingScale, typeScale } from "../convex/lib/design_system/builders";
+import { buildTypeScale, clamp, radiusScale, rem, spacingScale, typeScale } from "../convex/lib/design_system/builders";
 import { describeTokens, hueName } from "../convex/lib/design_system/describe";
 import { deriveRadius, deriveShadows, deriveSpacing, shadowBlur } from "../convex/lib/design_system/metrics";
 import { TYPE_RATIOS, type DesignSystemTokens } from "../convex/lib/design_system/types";
@@ -55,7 +55,8 @@ describe("deriveTypography", () => {
     expect(typography.headingWeight).toBe(800);
     expect(typography.bodyLineHeight).toBe(1.5);
     expect(typography.bodyWeight).toBe(400);
-    expect(notes).toEqual([]);
+    // Only the scale's own notes (the xs floor, for ratios over 1.125).
+    expect(notes).toEqual(buildTypeScale(16, typography.ratio).notes);
   });
 
   test("weights and line heights are weighted medians, line height unitless", () => {
@@ -119,8 +120,7 @@ describe("spacing, radius, shadows", () => {
   });
 
   test("radius md is the weighted median; pills are ignored", () => {
-    const { radius, mdPx } = deriveRadius([[{ value: 6, weight: 1 }, { value: 12, weight: 3 }, { value: 9999, weight: 10 }]]);
-    expect(mdPx).toBe(12);
+    const { radius } = deriveRadius([[{ value: 6, weight: 1 }, { value: 12, weight: 3 }, { value: 9999, weight: 10 }]]);
     expect(radius).toEqual({ sm: "0.375rem", md: "0.75rem", lg: "1.5rem", full: "9999px" });
     expect(deriveRadius([]).notes).toEqual(["No corner radii captured; using 8px"]);
   });
@@ -143,20 +143,55 @@ describe("spacing, radius, shadows", () => {
     expect(shadowBlur("rgba(0, 0, 0, 0.1) 0px 1px 3px 0px")).toBe(3);
     expect(shadowBlur("0 10px 15px -3px #0000001a, 0 4px 6px -4px rgb(0 0 0 / 0.1)")).toBe(15);
     expect(shadowBlur("inset 0 1px rgba(255,255,255,0.1)")).toBe(0);
+    expect(shadowBlur("0 2px 8px color-mix(in srgb, rgb(0 0 0) 20%, transparent)")).toBe(8);
   });
 });
 
 describe("builders", () => {
-  test("rem formats to three decimals", () => {
+  test("rem formats to four decimals, so whole px round-trip exactly", () => {
     expect(rem(0)).toBe("0rem");
     expect(rem(1.25)).toBe("1.25rem");
-    expect(rem(1 / 3)).toBe("0.333rem");
+    expect(rem(1 / 3)).toBe("0.3333rem");
+    for (let px = 0; px <= 320; px++) expect(parseFloat(rem(px / 16)) * 16).toBe(px);
+    expect(clamp(5, 0, 3)).toBe(3);
+    expect(clamp(-1, 0, 3)).toBe(0);
+  });
+
+  const px = (scale: Record<string, string>) => Object.values(scale).map((r) => Math.round(parseFloat(r) * 16 * 100) / 100);
+
+  test("type scale: below base shrinks by at most 1.2 and stops at 12px", () => {
+    const { scale, notes } = buildTypeScale(16, 1.5);
+    expect(scale.sm).toBe("0.8333rem"); // 16 / 1.2, not 16 / 1.5
+    expect(scale.xs).toBe("0.75rem"); // 11.1px floored to 12
+    expect(notes[0]).toBe("Small type steps floored at 12px");
+    expect(buildTypeScale(16, 1.125)).toEqual({ scale: expect.objectContaining({ xs: "0.7901rem", sm: "0.8889rem" }), notes: [] });
+  });
+
+  test("type scale: 5xl is capped at 6rem, steps above base spread geometrically", () => {
+    const { scale, notes } = buildTypeScale(16, 1.5);
+    expect(scale["5xl"]).toBe("6rem");
+    const sizes = px(scale);
+    const up = (96 / 16) ** (1 / 6);
+    for (let k = 0; k <= 6; k++) expect(sizes[2 + k]).toBeCloseTo(16 * up ** k, 1);
+    expect(notes[1]).toBe("5xl capped at 96px (6rem); steps above base spread by 1.348 instead of 1.5");
+    // 1.333 stays under the cap (89.8px) and keeps its own ratio.
+    expect(buildTypeScale(16, 1.333)).toEqual({ scale: expect.objectContaining({ "5xl": "5.6102rem" }), notes: ["Small type steps floored at 12px"] });
+  });
+
+  test.each([...TYPE_RATIOS])("type scale %s never shrinks step to step and stays within 12–96px", (ratio) => {
+    for (const base of [12, 14, 16, 18, 24]) {
+      const sizes = px(buildTypeScale(base, ratio).scale);
+      for (let i = 1; i < sizes.length; i++) expect(sizes[i]!).toBeGreaterThanOrEqual(sizes[i - 1]!);
+      expect(sizes[2]).toBe(base);
+      expect(Math.min(...sizes)).toBeGreaterThanOrEqual(12);
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(96);
+    }
   });
 
   test("typeScale, spacingScale and radiusScale", () => {
     expect(typeScale(16, 1.25)).toEqual({
-      xs: "0.64rem", sm: "0.8rem", base: "1rem", lg: "1.25rem", xl: "1.563rem",
-      "2xl": "1.953rem", "3xl": "2.441rem", "4xl": "3.052rem", "5xl": "3.815rem",
+      xs: "0.75rem", sm: "0.8333rem", base: "1rem", lg: "1.25rem", xl: "1.5625rem",
+      "2xl": "1.9531rem", "3xl": "2.4414rem", "4xl": "3.0518rem", "5xl": "3.8147rem",
     });
     expect(spacingScale(4)).toEqual({
       "0": "0rem", "1": "0.25rem", "2": "0.5rem", "3": "0.75rem", "4": "1rem",

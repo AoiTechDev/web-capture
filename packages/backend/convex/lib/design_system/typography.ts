@@ -3,7 +3,7 @@
  * weights and line heights. Pure and deterministic.
  */
 
-import { TYPE_STEP_EXPONENT, typeScale } from "./builders";
+import { TYPE_STEP_EXPONENT, buildTypeScale, clamp } from "./builders";
 import { TYPE_RATIOS, type DesignSystemTokens } from "./types";
 import { MAX_FONT_NAME, isValidFontName } from "./validate";
 
@@ -102,7 +102,6 @@ export function fitRatio(sizes: { value: number; weight: number }[], base = BASE
   return best;
 }
 
-const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function deriveTypography(captures: SourceFont[][]): { typography: DesignSystemTokens["typography"]; notes: string[] } {
@@ -156,6 +155,8 @@ export function deriveTypography(captures: SourceFont[][]): { typography: Design
     return round2(clamp(m ?? fallback, 0.9, 2.5));
   };
   if (!headings.length) notes.push("No heading sizes captured; heading weight and line height use defaults");
+  const scale = buildTypeScale(BASE_SIZE, ratio);
+  notes.push(...scale.notes);
 
   return {
     typography: {
@@ -163,7 +164,7 @@ export function deriveTypography(captures: SourceFont[][]): { typography: Design
       fontBody: fontBody!,
       ratio,
       baseSize: BASE_SIZE,
-      scale: typeScale(BASE_SIZE, ratio),
+      scale: scale.scale,
       headingWeight: weightOf(headings, 700),
       bodyWeight: weightOf(body, 400),
       headingLineHeight: lineHeightOf(headings, 1.2),

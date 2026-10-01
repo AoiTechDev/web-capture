@@ -38,6 +38,7 @@ export const contrastCheckValidator = v.object({
     v.literal("text/background"),
     v.literal("textMuted/background"),
     v.literal("text/surface"),
+    v.literal("textMuted/surface"),
     v.literal("primary/background")
   ),
   foreground: v.string(),

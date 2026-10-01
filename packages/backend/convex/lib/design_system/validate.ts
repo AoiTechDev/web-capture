@@ -5,7 +5,8 @@
  * Tokens end up verbatim in exported CSS, so every string has a narrow
  * format: colours are #rrggbb, sizes are rem, font names and shadows use an
  * allow-listed character set with no `;`, `{`, `}`, quotes or comments, so a
- * value can never close the declaration or rule it is written into. Unknown
+ * value can never close the declaration or rule it is written into, and a
+ * shadow may only call colour functions (SHADOW_FUNCTIONS). Unknown
  * keys are rejected and the result is rebuilt from the known ones only.
  */
 
@@ -21,7 +22,21 @@ const REM = /^(?:0|[0-9]{1,3}(?:\.[0-9]{1,4})?)rem$/;
 const FONT_NAME = /^[\p{L}\p{N} _.&+-]+$/u;
 /** Lengths, numbers, colour functions (incl. `/ alpha`), `inset`, commas. */
 const SHADOW = /^[a-z0-9 #(),.%+\-/]+$/i;
-const SHADOW_FORBIDDEN = /\/\*|\*\/|\b(?:url|image|image-set|expression|attr|env|var)\s*\(/i;
+/** The only functions a shadow may call: colours. */
+export const SHADOW_FUNCTIONS: ReadonlySet<string> = new Set([
+  "rgb",
+  "rgba",
+  "hsl",
+  "hsla",
+  "oklch",
+  "oklab",
+  "lab",
+  "lch",
+  "color",
+  "color-mix",
+]);
+/** Every `name(` in a value; an empty name is a bare parenthesis. */
+const FUNCTION_CALL = /([a-z-]*)\s*\(/gi;
 
 class TokenError extends Error {
   constructor(path: string, problem: string) {
@@ -41,8 +56,13 @@ function object(value: unknown, path: string, keys: readonly string[], optional:
   return o;
 }
 
+/** `#rrggbb`, either case. */
+export function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && HEX.test(value);
+}
+
 function hex(value: unknown, path: string): string {
-  if (typeof value !== "string" || !HEX.test(value)) throw new TokenError(path, "must be a #rrggbb colour");
+  if (!isHexColor(value)) throw new TokenError(path, "must be a #rrggbb colour");
   return value.toLowerCase();
 }
 
@@ -77,7 +97,9 @@ export function isValidShadow(value: unknown): value is string {
     value.length <= MAX_SHADOW &&
     value.trim() === value &&
     SHADOW.test(value) &&
-    !SHADOW_FORBIDDEN.test(value)
+    // `/` only as an alpha separator, never a comment.
+    !value.includes("/*") &&
+    [...value.matchAll(FUNCTION_CALL)].every((m) => SHADOW_FUNCTIONS.has(m[1]!.toLowerCase()))
   );
 }
 
@@ -119,7 +141,7 @@ export function validateTokens(input: unknown): DesignSystemTokens {
     fontHeading: fontName(ty.fontHeading, "typography.fontHeading"),
     fontBody: fontName(ty.fontBody, "typography.fontBody"),
     ratio: num(ty.ratio, "typography.ratio", 1, 2),
-    baseSize: num(ty.baseSize, "typography.baseSize", 8, 32),
+    baseSize: num(ty.baseSize, "typography.baseSize", 12, 32),
     scale: Object.fromEntries(
       TYPE_STEPS.map((s) => [s, remValue(typeScale[s], `typography.scale.${s}`, 20)])
     ) as DesignSystemTokens["typography"]["scale"],
@@ -151,7 +173,7 @@ export function validateTokens(input: unknown): DesignSystemTokens {
   for (const k of ["sm", "md", "lg"] as const) {
     if (sh[k] === undefined) continue;
     if (!isValidShadow(sh[k])) {
-      throw new TokenError(`shadow.${k}`, `must be a box-shadow of up to ${MAX_SHADOW} characters without ; { } quotes, comments or url()`);
+      throw new TokenError(`shadow.${k}`, `must be a box-shadow of up to ${MAX_SHADOW} characters without ; { } quotes or comments, calling only colour functions`);
     }
     shadow[k] = sh[k];
   }

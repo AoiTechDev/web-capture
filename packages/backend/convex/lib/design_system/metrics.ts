@@ -38,21 +38,24 @@ const PILL_RADIUS = 100;
 export const DEFAULT_RADIUS = 8;
 
 /** md = weighted median radius (px, rounded), sm = md/2, lg = md×2. */
-export function deriveRadius(captures: WeightedValue<number>[][]): { radius: DesignSystemTokens["radius"]; mdPx: number; notes: string[] } {
+export function deriveRadius(captures: WeightedValue<number>[][]): { radius: DesignSystemTokens["radius"]; notes: string[] } {
   const values = perCapture(captures, (v) => Number.isFinite(v) && v >= 0 && v < PILL_RADIUS);
   const median = weightedMedian(values);
   if (median === null) {
-    return { radius: radiusScale(DEFAULT_RADIUS), mdPx: DEFAULT_RADIUS, notes: [`No corner radii captured; using ${DEFAULT_RADIUS}px`] };
+    return { radius: radiusScale(DEFAULT_RADIUS), notes: [`No corner radii captured; using ${DEFAULT_RADIUS}px`] };
   }
-  const mdPx = Math.round(median);
-  return { radius: radiusScale(mdPx), mdPx, notes: [] };
+  return { radius: radiusScale(Math.round(median)), notes: [] };
 }
 
-const COLOR_FN = /(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\([^)]*\)|#[0-9a-f]{3,8}\b/gi;
+const INNERMOST_CALL = /[a-z-]+\([^()]*\)/gi;
+const HEX_COLOR = /#[0-9a-f]{3,8}\b/gi;
 
 /** Largest blur radius (px) among a box-shadow's layers; the third length of each. */
 export function shadowBlur(value: string): number {
-  const layers = value.replace(COLOR_FN, " ").split(",");
+  // Drop colours, innermost calls first so nested ones (color-mix) go too.
+  let rest = value.replace(HEX_COLOR, " ");
+  for (let prev = ""; prev !== rest; ) [prev, rest] = [rest, rest.replace(INNERMOST_CALL, " ")];
+  const layers = rest.split(",");
   let blur = 0;
   for (const layer of layers) {
     const lengths = layer.match(/-?\d*\.?\d+(?=px\b|\s|$)/g) ?? [];

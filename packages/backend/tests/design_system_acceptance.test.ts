@@ -124,6 +124,9 @@ describe("design system acceptance: three prepared sessions", () => {
     expect(tokens.typography.baseSize).toBe(16);
     expect(TYPE_RATIOS).toContain(tokens.typography.ratio);
     expect(e.ratio(tokens.typography.ratio)).toBe(true);
+    const steps = Object.values(tokens.typography.scale).map((r) => parseFloat(r) * 16);
+    expect(Math.min(...steps)).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...steps)).toBeLessThanOrEqual(96);
     expect(tokens.typography.headingWeight).toBeGreaterThanOrEqual(600);
     expect(tokens.typography.bodyWeight).toBeLessThanOrEqual(500);
     expect(tokens.typography.bodyLineHeight).toBeGreaterThanOrEqual(1.3);

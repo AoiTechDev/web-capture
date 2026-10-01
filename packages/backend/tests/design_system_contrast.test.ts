@@ -9,7 +9,8 @@ import { adjustLightness, checkContrast, contrastRatio, fixContrast } from "../c
 import { hexToOklch, hueDistance } from "../convex/lib/design_system/oklch";
 import { buildScale } from "../convex/lib/design_system/scale";
 import type { DesignSystemTokens } from "../convex/lib/design_system/types";
-import { validateTokens } from "../convex/lib/design_system/validate";
+import { isHexColor, isValidShadow, validateTokens } from "../convex/lib/design_system/validate";
+import { normalizeHex } from "../convex/lib/design_system/scale";
 
 function sampleTokens(colors: Partial<Record<"background" | "surface" | "border" | "text" | "textMuted" | "primary", string>> = {}): DesignSystemTokens {
   return {
@@ -20,7 +21,7 @@ function sampleTokens(colors: Partial<Record<"background" | "surface" | "border"
       surface: colors.surface ?? "#f1f5f9",
       border: colors.border ?? "#e2e8f0",
       text: colors.text ?? "#0f172a",
-      textMuted: colors.textMuted ?? "#64748b",
+      textMuted: colors.textMuted ?? "#475569",
       primary: buildScale(colors.primary ?? "#6d28d9"),
     },
     typography: {
@@ -57,14 +58,16 @@ describe("contrastRatio / checkContrast", () => {
     expect(contrastRatio("nope", "#ffffff")).toBe(1);
   });
 
-  test("the four pairs, ratios floored so the display never rounds up to a pass", () => {
+  test("the five pairs, ratios floored so the display never rounds up to a pass", () => {
     const checks = checkContrast(sampleTokens({ textMuted: "#777777" }));
     expect(checks.map((c) => [c.pair, c.required])).toEqual([
       ["text/background", 4.5],
       ["textMuted/background", 4.5],
       ["text/surface", 4.5],
+      ["textMuted/surface", 4.5],
       ["primary/background", 3],
     ]);
+    expect(checks[3]).toMatchObject({ foreground: "#777777", background: "#f1f5f9", passes: false });
     const muted = checks[1]!;
     expect(muted).toMatchObject({ foreground: "#777777", background: "#ffffff", passes: false });
     expect(muted.ratio).toBe(4.47);
@@ -78,15 +81,18 @@ describe("fixContrast", () => {
     expect(fixContrast(tokens)).toEqual({ tokens, notes: [] });
   });
 
-  test("raises textMuted just to 4.5:1 by lightness, keeping hue", () => {
+  test("raises textMuted just to 4.5:1 on background and surface, by lightness, keeping hue", () => {
     const tokens = sampleTokens({ textMuted: "#94a3b8" });
     const { tokens: fixed, notes } = fixContrast(tokens);
     expect(checkContrast(fixed).every((c) => c.passes)).toBe(true);
-    const ratio = contrastRatio(fixed.colors.textMuted, "#ffffff");
+    // The surface (#f1f5f9) is the binding pair: just past 4.5 there.
+    const ratio = contrastRatio(fixed.colors.textMuted, "#f1f5f9");
     expect(ratio).toBeGreaterThanOrEqual(4.5);
     expect(ratio).toBeLessThan(4.7);
     lightnessOnly("#94a3b8", fixed.colors.textMuted);
-    expect(notes).toEqual(["Raised textMuted contrast from 2.5:1 to 4.5:1"]);
+    expect(notes[0]).toBe("Raised textMuted contrast from 2.5:1 to 4.5:1");
+    expect(notes[1]).toMatch(/^Raised textMuted contrast on surface from 4\.\d:1 to 4\.5:1$/);
+    expect(notes).toHaveLength(2);
     // The input is untouched.
     expect(tokens.colors.textMuted).toBe("#94a3b8");
   });
@@ -122,11 +128,20 @@ describe("fixContrast", () => {
     }
   });
 
-  test("a surface on the far side of the text is moved, not the background", () => {
+  test("a surface on the far side of the text is moved, not the text or the background", () => {
     const { tokens: fixed, notes } = fixContrast(sampleTokens({ background: "#ffffff", surface: "#111111", text: "#222222" }));
     expect(checkContrast(fixed).every((c) => c.passes)).toBe(true);
     expect(fixed.colors.background).toBe("#ffffff");
-    expect(notes.some((n) => n.startsWith("Moved surface lightness"))).toBe(true);
+    expect(fixed.colors.text).toBe("#222222");
+    expect(fixed.colors.textMuted).toBe("#475569");
+    expect(hexToOklch(fixed.colors.surface)!.l).toBeGreaterThan(0.8); // the least move: 4.5:1 for #475569
+    expect(notes).toEqual([`Moved surface #111111 to ${fixed.colors.surface} so text and muted text both reach 4.5:1 on it`]);
+  });
+
+  test("notes muted text that is indistinguishable from text", () => {
+    const { notes } = fixContrast(sampleTokens({ background: "#808080", surface: "#8a8a8a", text: "#000000", textMuted: "#111111" }));
+    expect(notes).toContain("textMuted is barely distinguishable from text (1.1:1)");
+    expect(fixContrast(sampleTokens()).notes).toEqual([]);
   });
 
   test("adjustLightness prefers the colour's own side and returns null when nothing works", () => {
@@ -170,6 +185,7 @@ describe("validateTokens", () => {
     ["radius full", (t) => (t.radius.full = "50%")],
     ["ratio out of range", (t) => (t.typography.ratio = 3)],
     ["NaN base size", (t) => (t.typography.baseSize = NaN)],
+    ["base size under 12px", (t) => (t.typography.baseSize = 11)],
     ["fractional weight", (t) => (t.typography.bodyWeight = 450.5)],
     ["string weight", (t) => (t.typography.bodyWeight = "400")],
     ["spacing base 6", (t) => (t.spacing.base = 6)],
@@ -186,6 +202,9 @@ describe("validateTokens", () => {
     ["shadow with semicolon", (t) => (t.shadow.sm = "0 1px 2px #000; color: red")],
     ["shadow with brace", (t) => (t.shadow.md = "0 1px 2px #000 } body {")],
     ["shadow with url()", (t) => (t.shadow.md = "0 1px 2px url(https://evil.example/x)")],
+    ["shadow with env()", (t) => (t.shadow.md = "0 1px 2px env(safe-area-inset-top)")],
+    ["shadow with calc()", (t) => (t.shadow.md = "0 1px calc(2px + 1px) #000")],
+    ["shadow with a bare parenthesis", (t) => (t.shadow.md = "0 1px 2px (#000)")],
     ["shadow with a comment", (t) => (t.shadow.md = "0 1px 2px #000 /* x */")],
     ["shadow with quotes", (t) => (t.shadow.md = '0 1px 2px "x"')],
     ["shadow too long", (t) => (t.shadow.lg = "0 1px 2px #000, ".repeat(40) + "0 0 0 #000")],
@@ -193,6 +212,27 @@ describe("validateTokens", () => {
     ["unknown shadow key", (t) => (t.shadow.xl = "0 1px 2px #000")],
   ])("rejects %s", (_name, fn) => {
     expect(() => validateTokens(mutate(fn))).toThrow(/^Invalid design system tokens: /);
+  });
+
+  test("shadows may call colour functions only", () => {
+    for (const ok of [
+      "rgba(0, 0, 0, 0.1) 0px 1px 3px 0px",
+      "0 1px 2px rgb(0 0 0 / 0.1), inset 0 0 0 1px #0000001a",
+      "0 4px 8px hsl(220 13% 18% / 0.2)",
+      "0 0 0 1px color-mix(in srgb, oklch(0.5 0.1 250) 40%, transparent)",
+      "0 2px 4px lab(20 0 0), 0 1px 2px lch(20 0 0), 0 1px 1px oklab(0.2 0 0), 0 0 1px color(srgb 0 0 0 / 0.5), 0 0 1px HSLA(0, 0%, 0%, 0.1)",
+    ]) {
+      expect(isValidShadow(ok)).toBe(true);
+    }
+    expect(isValidShadow("0 1px 2px var(--x)")).toBe(false);
+  });
+
+  test("normalizeHex and isHexColor", () => {
+    expect(normalizeHex("#ABC")).toBe("#aabbcc");
+    expect(normalizeHex(" #A1b2C3 ")).toBe("#a1b2c3");
+    for (const bad of ["#abcd", "#a1b2c3d4", "abc", "#ab", "rgb(0,0,0)", ""]) expect(normalizeHex(bad)).toBeNull();
+    expect(isHexColor("#A1B2C3")).toBe(true);
+    for (const bad of ["#abc", "a1b2c3", 5, null]) expect(isHexColor(bad)).toBe(false);
   });
 
   test("rejects non-objects", () => {

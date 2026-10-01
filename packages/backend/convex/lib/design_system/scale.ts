@@ -35,20 +35,22 @@ const CHROMA: Record<ShadeStep, number> = {
 const LIGHTEST = 0.975;
 const DARKEST = 0.22;
 
-/** Lowercase `#rrggbb`, or null when `hex` is not a colour. */
-function normalizeHex(hex: string): string | null {
-  const o = hexToOklch(hex);
-  return o ? oklchToHex(o) : null;
+/** Lowercase `#rrggbb` from `#rgb` or `#rrggbb` (either case, surrounding space ignored); null otherwise, alpha forms included. */
+export function normalizeHex(input: string): string | null {
+  const m = input.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return null;
+  const h = m[1]!.toLowerCase();
+  return `#${h.length === 3 ? h.replace(/./g, (c) => c + c) : h}`;
 }
 
 /**
- * A full scale whose 500 is `hex500` exactly (lowercased). Throws on a
- * malformed colour.
+ * A full scale whose 500 is `hex500` exactly (as normalizeHex gives it).
+ * Throws on anything normalizeHex rejects.
  */
 export function buildScale(hex500: string): ColorScale {
-  const base = hexToOklch(hex500);
   const exact = normalizeHex(hex500);
-  if (!base || !exact) throw new Error(`Not a colour: ${hex500}`);
+  const base = exact ? hexToOklch(exact) : null;
+  if (!exact || !base) throw new Error(`Not a colour: ${hex500}`);
   // The ends must stay beyond 500 so the ramp is monotonic for any base.
   const top = Math.min(1, Math.max(LIGHTEST, base.l + 0.01));
   const bottom = Math.max(0, Math.min(DARKEST, base.l - 0.01));
@@ -56,8 +58,8 @@ export function buildScale(hex500: string): ColorScale {
   const scale = {} as ColorScale;
   for (const step of SHADE_STEPS) {
     if (step === "500") {
-      // Re-encoding a hex through OKLCH can move a channel by one; keep the input.
-      scale[step] = /^#[0-9a-f]{6}$/i.test(hex500.trim()) ? hex500.trim().toLowerCase() : exact;
+      // The input itself: re-encoding through OKLCH could move a channel by one.
+      scale[step] = exact;
       continue;
     }
     const up = UPPER[step];
