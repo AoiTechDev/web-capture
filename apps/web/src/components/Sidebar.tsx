@@ -1,7 +1,6 @@
 "use client";
 import { useQuery } from "convex/react";
 import { api } from "../../../../packages/backend/convex/_generated/api";
-import { useSelectedCategoryStore } from "@/store/selected-category-store";
 import { SignedIn, UserButton, useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -52,10 +51,8 @@ const SectionLabel = ({ children }: { children: React.ReactNode }) => (
 );
 
 const Sidebar = () => {
-  const categories = useQuery(api.captures.listCategories);
   const tags = useQuery(api.captures.listTags);
   const sessions = useQuery(api.sessions.listSessions, { limit: 100, thumbsPerSession: 0 });
-  const { selected, setSelected } = useSelectedCategoryStore();
   const { user } = useUser();
   const pathname = usePathname();
 
@@ -125,43 +122,6 @@ const Sidebar = () => {
           </div>
         )}
 
-        {/* Categories predate Sessions and are kept only for existing data, so
-            they sit below the fold under a label that says as much. */}
-        {categories && categories.length > 0 && (
-          <div>
-            <SectionLabel>Legacy</SectionLabel>
-            <button
-              onClick={() => setSelected("unsorted")}
-              className={`flex h-8 w-full items-center justify-between rounded-md px-2.5 text-[13px] transition-colors ${
-                selected === "unsorted"
-                  ? "text-[var(--text)]"
-                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              <span>Categories</span>
-              <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">
-                {categories.length}
-              </span>
-            </button>
-            <div className="mt-0.5 space-y-0.5">
-              {categories
-                .filter((c: { name: string }) => c.name !== "unsorted")
-                .map((c: { _id: string; name: string }) => (
-                  <button
-                    key={c._id}
-                    onClick={() => setSelected(c.name)}
-                    className={`flex h-7 w-full items-center rounded-md pl-5 pr-2.5 text-[12px] transition-colors ${
-                      selected === c.name
-                        ? "bg-[var(--surface-hover)] text-[var(--text)]"
-                        : "text-[var(--text-muted)] hover:text-[var(--text)]"
-                    }`}
-                  >
-                    <span className="truncate">{c.name}</span>
-                  </button>
-                ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <SignedIn>

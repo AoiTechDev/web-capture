@@ -2,16 +2,17 @@
 
 import { useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
-import { Trash, Maximize2, Download, FolderEdit, RotateCw } from "lucide-react";
+import { Trash, Maximize2, Download, RotateCw } from "lucide-react";
 
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
 import { Id } from "../../../../packages/backend/convex/_generated/dataModel";
 import { useMaximizeImageStore } from "@/store/maximize-image-store";
+import { useRemovedCapturesStore } from "@/store/removed-captures-store";
 import { preloadImage } from "@/utils/image-preloader";
-import ChangeCategoryDialog from "./ChangeCategoryDialog";
 import type { CaptureDetails } from "./DesignDnaPanel";
-interface MasonryItem extends CaptureDetails {
+
+export interface MasonryItem extends CaptureDetails {
   _id: string;
   url?: string;
   /** Grid-sized WebP; the full image is used when there is none. */
@@ -24,15 +25,25 @@ interface MasonryItem extends CaptureDetails {
   storageId?: string;
   pageUrl?: string;
   tags?: string[];
-  /** Enrichment state: pending | processing | ready | failed | skipped. */
+  /**
+   * Enrichment state: pending | processing | ready | failed. `skipped` (old
+   * captures never queued) shows no chip: the analysis is local and free, so
+   * there is no plan limit to explain.
+   */
   status?: string | null;
   error?: string | null;
   aiCategory?: string | null;
   aiTags?: string[] | null;
+  aiDescription?: string | null;
+  title?: string | null;
+  sessionId?: string | null;
+  sessionName?: string | null;
 }
 
 interface MasonryLayoutProps {
   items: MasonryItem[];
+  /** A palette swatch was clicked: filter by its colour. Swatches are inert without it. */
+  onPickColor?: (hex: string) => void;
 }
 
 const COLUMN_WIDTH = 280;
@@ -142,19 +153,41 @@ function calculateImageHeight(
   return Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, calculatedHeight));
 }
 
-export default function MasonryLayout({ items }: MasonryLayoutProps) {
+export default function MasonryLayout({ items, onPickColor }: MasonryLayoutProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<number>(3);
   const [columnWidth, setColumnWidth] = useState<number>(COLUMN_WIDTH);
   const [containerWidth, setContainerWidth] = useState<number>(0);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { setIsOpen, setImageUrl, setDetails } = useMaximizeImageStore();
+  const { setIsOpen, setImageUrl, setDetails, setCapture } = useMaximizeImageStore();
+  const markRemoved = useRemovedCapturesStore((s) => s.markRemoved);
   const deleteById = useMutation(api.upload.deleteById);
   const retryProcessing = useMutation(api.local_ai.retryProcessing);
   // Search results do not update live, so a retried card is shown as
   // analysing locally until its row is next fetched.
   const [retried, setRetried] = useState<Set<string>>(() => new Set());
+
+  const openDetail = (item: MasonryItem) => {
+    if (item.url) preloadImage(item.url);
+    setImageUrl(item.url || "");
+    setDetails({
+      designDna: item.designDna ?? null,
+      palette: item.palette ?? null,
+      clipped: item.clipped ?? null,
+    });
+    setCapture({
+      id: item._id,
+      kind: item.kind,
+      title: item.title ?? item.alt ?? null,
+      pageUrl: item.pageUrl ?? null,
+      aiDescription: item.aiDescription ?? null,
+      aiCategory: item.aiCategory ?? null,
+      aiTags: item.aiTags ?? null,
+      tags: item.tags ?? [],
+      sessionId: item.sessionId ?? null,
+      sessionName: item.sessionName ?? null,
+    });
+    setIsOpen(true);
+  };
 
   const handleDownload = async (url?: string, preferredName?: string) => {
     if (!url) return;
@@ -283,31 +316,28 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
               {/* Compact action bar, revealed on hover in the top-right rather
                   than a full-cover scrim: the image stays readable while you
                   reach for an action. */}
-              <div className="pointer-events-none absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
+              <div className="pointer-events-none absolute right-2 top-2 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
                 <button
+                  type="button"
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
-                  title="Maximize"
+                  title="Open"
+                  aria-label="Open details"
                   onMouseEnter={() => {
                     if (item.url) preloadImage(item.url);
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (item.url) preloadImage(item.url);
-                    setIsOpen(true);
-                    setImageUrl(item.url || "");
-                    setDetails({
-                      designDna: item.designDna ?? null,
-                      palette: item.palette ?? null,
-                      clipped: item.clipped ?? null,
-                    });
+                    openDetail(item);
                   }}
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
                 </button>
 
                 <button
+                  type="button"
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
                   title="Download"
+                  aria-label="Download"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDownload(item.url, item.alt || `capture-${item._id}`);
@@ -317,27 +347,19 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                 </button>
 
                 <button
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:text-[var(--text)]"
-                  title="Change category"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedId(item._id);
-                    setDialogOpen(true);
-                  }}
-                >
-                  <FolderEdit className="h-3.5 w-3.5" />
-                </button>
-
-                <button
+                  type="button"
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
                   title="Delete"
+                  aria-label="Delete"
                   onClick={(e) => {
                     e.stopPropagation();
                     // The server deletes the capture's own file; it never
                     // takes a storage id from the client.
                     deleteById({
                       docId: item._id as Id<"captures">,
-                    });
+                    })
+                      .then(() => markRemoved(item._id))
+                      .catch((err) => console.error("Failed to delete capture:", err));
                   }}
                 >
                   <Trash className="h-3.5 w-3.5" />
@@ -349,6 +371,8 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                 onMouseEnter={() => {
                   if (item.url) preloadImage(item.url);
                 }}
+                // A mouse shortcut; the Open button is the keyboard path.
+                onClick={() => openDetail(item)}
               >
                 {(item.thumbUrl || item.url) && (
                   <Image
@@ -384,14 +408,29 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
                         so the footer height the layout assumes is unchanged. */}
                     {item.palette && item.palette.length > 0 && (
                       <div className="ml-auto flex shrink-0 overflow-hidden rounded-[3px] border border-[var(--border)]">
-                        {item.palette.slice(0, 6).map((p, i) => (
-                          <span
-                            key={`${p.hex}-${i}`}
-                            title={p.hex}
-                            className="h-2.5 w-2.5"
-                            style={{ backgroundColor: p.hex }}
-                          />
-                        ))}
+                        {item.palette.slice(0, 6).map((p, i) =>
+                          onPickColor ? (
+                            <button
+                              key={`${p.hex}-${i}`}
+                              type="button"
+                              title={`Show captures with ${p.hex}`}
+                              aria-label={`Filter by colour ${p.hex}`}
+                              className="h-3 w-3"
+                              style={{ backgroundColor: p.hex }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onPickColor(p.hex);
+                              }}
+                            />
+                          ) : (
+                            <span
+                              key={`${p.hex}-${i}`}
+                              title={p.hex}
+                              className="h-2.5 w-2.5"
+                              style={{ backgroundColor: p.hex }}
+                            />
+                          )
+                        )}
                       </div>
                     )}
                   </div>
@@ -417,11 +456,6 @@ export default function MasonryLayout({ items }: MasonryLayoutProps) {
           </div>
         );
       })}
-      <ChangeCategoryDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        captureId={selectedId}
-      />
     </div>
   );
 }

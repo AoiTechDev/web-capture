@@ -1,92 +1,52 @@
 "use client";
 import { api } from "../../../../../packages/backend/convex/_generated/api";
-import MasonryLayout from "@/components/MansoryLayout";
 import MaximizedText from "@/components/MaximizedText";
-import TextWrapLayout from "@/components/TextWrapLayout";
-import LinkList from "@/components/LinkList";
-import { useSelectedCategoryStore } from "@/store/selected-category-store";
+import CaptureGrid from "@/components/CaptureGrid";
+import { FilterPanel, TypeChips } from "@/components/FilterBar";
+import { MasonrySkeleton } from "@/components/Skeletons";
 import { useCachedQuery } from "@/hooks/useStableQuery";
-import { MasonrySkeleton, ListSkeleton } from "@/components/Skeletons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Images, Camera, Link, FileText } from "lucide-react";
-import { useAction } from "convex/react";
-import type { FunctionArgs, FunctionReturnType } from "convex/server";
-import type { CaptureDetails } from "@/components/DesignDnaPanel";
 import { useQueryEmbedding } from "@/hooks/useQueryEmbedding";
+import { useFilterParams } from "@/hooks/useFilterParams";
+import { useCaptureFeed } from "@/hooks/useCaptureFeed";
+import { argsKey, filtersToArgs, type FeedFilterArgs } from "@/lib/capture-feed";
+import { clearFilters, countActiveFilters, normalizeHexColor } from "@/lib/capture-filters";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Search, SlidersHorizontal } from "lucide-react";
 
-
-type Kind = "image" | "text" | "link" | "code" | "screenshot";
-
-type SearchArgs = FunctionArgs<typeof api.search.searchCaptures>;
-
-/** Row shape returned by `search.searchCaptures` and consumed by the layouts. */
-type SearchRow = FunctionReturnType<typeof api.search.searchCaptures>["results"][number];
-
-/** Stored kinds each tab lists; the Screenshots tab also holds element and viewport shots. */
-const KINDS_FOR_TAB: Record<Kind, NonNullable<SearchArgs["kinds"]>> = {
-  image: ["image"],
-  screenshot: ["screenshot", "element", "viewport"],
-  link: ["link"],
-  text: ["text"],
-  code: ["code"],
-};
-
-/**
- * Arguments for `search.searchCaptures`. `vectors.vector` is the query
- * embedded by the Chrome extension's local model (useQueryEmbedding); with
- * SigLIP2 that one vector serves both the image and the text index, so
- * `textVector` stays unset. Without a vector the action searches by keyword
- * only, through the same path.
- */
-function buildSearchArgs(
-  query: string,
-  kind: Kind,
-  vectors: Pick<SearchArgs, "vector" | "textVector"> = {}
-): SearchArgs {
-  return { query, kinds: KINDS_FOR_TAB[kind], limit: 60, ...vectors };
+/** `value`, but the same object for as long as `key` is unchanged. */
+function useStableByKey<T>(value: T, key: string): T {
+  const ref = useRef({ key, value });
+  if (ref.current.key !== key) ref.current = { key, value };
+  return ref.current.value;
 }
 
-/** What the layout components accept once a row has been normalised. */
-type DisplayItem = CaptureDetails & {
-  _id: string;
-  kind?: string;
-  status?: string | null;
-  error?: string | null;
-  aiCategory?: string | null;
-  aiTags?: string[] | null;
-  url?: string;
-  thumbUrl?: string | null;
-  pageUrl?: string;
-  width: number;
-  height: number;
-  alt: string;
-  tags: string[];
-  storageId?: string;
-};
+type EmptyKind = "library" | "noMatches" | "error";
 
 /**
- * The app is empty until the extension is installed, so this doubles as the
- * install prompt rather than just reporting an absence.
+ * The library is empty until the extension is installed, so that state
+ * doubles as the install prompt. "No matches" offers the way back out.
  */
-const EmptyState = ({ searching }: { searching: boolean }) => (
+const EmptyState = ({
+  kind,
+  canClearFilters,
+  canClearSearch,
+  onClearFilters,
+  onClearSearch,
+}: {
+  kind: EmptyKind;
+  canClearFilters: boolean;
+  canClearSearch: boolean;
+  onClearFilters: () => void;
+  onClearSearch: () => void;
+}) => (
   <div className="surface-card flex min-h-[320px] flex-col items-center justify-center px-6 py-16 text-center">
     <span className="mb-5 flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--blue-500)]">
       <span className="h-2.5 w-2.5 rounded-[2px] bg-white" />
     </span>
 
-    {searching ? (
+    {kind === "library" ? (
       <>
-        <h2 className="mb-2 text-[16px] font-semibold text-[var(--text)]">No matches</h2>
-        <p className="max-w-sm text-[13px] leading-relaxed text-[var(--text-muted)]">
-          Nothing here matches that search. Try a different word, or clear the
-          field to see everything again.
-        </p>
-      </>
-    ) : (
-      <>
-        <h2 className="mb-2 text-[16px] font-semibold text-[var(--text)]">
-          Nothing captured yet
-        </h2>
+        <h2 className="mb-2 text-[16px] font-semibold text-[var(--text)]">No captures yet</h2>
         <p className="mb-6 max-w-md text-[13px] leading-relaxed text-[var(--text-muted)]">
           Install the Chrome extension and press a shortcut on any page to save an
           image, screenshot, link or selection. Everything you capture lands here.
@@ -95,31 +55,65 @@ const EmptyState = ({ searching }: { searching: boolean }) => (
           <a className="btn-primary" href="#">
             Add to Chrome
           </a>
-          <span className="mono text-[12px] text-[var(--text-subtle)]">
-            then press ⌘⇧S
-          </span>
+          <span className="mono text-[12px] text-[var(--text-subtle)]">then press ⌘⇧S</span>
+        </div>
+      </>
+    ) : (
+      <>
+        <h2 className="mb-2 text-[16px] font-semibold text-[var(--text)]">
+          {kind === "error" ? "Couldn't load captures" : "No matches"}
+        </h2>
+        <p className="mb-6 max-w-sm text-[13px] leading-relaxed text-[var(--text-muted)]">
+          {kind === "error"
+            ? "Something went wrong fetching your library. Try again, or loosen the filters."
+            : "Nothing in your library matches this search and these filters. Try a different word, or widen the filters."}
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {canClearFilters && (
+            <button type="button" className="btn-secondary" onClick={onClearFilters}>
+              Clear filters
+            </button>
+          )}
+          {canClearSearch && (
+            <button type="button" className="btn-secondary" onClick={onClearSearch}>
+              Clear search
+            </button>
+          )}
         </div>
       </>
     )}
   </div>
 );
-export default function DashboardPage() {
-  const { selected } = useSelectedCategoryStore();
-  const [selectedKind, setSelectedKind] = useState<Kind>("image");
-  const [q, setQ] = useState("");
-  // Rows remember the tab they were fetched for, so switching tabs never
-  // shows the previous tab's kinds in the wrong layout.
-  const [search, setSearch] = useState<{ kind: Kind; rows: SearchRow[] } | null>(null);
-  const runSearch = useAction(api.search.searchCaptures);
+
+function Dashboard() {
+  const { filters, setFilters } = useFilterParams();
+  const [q, setQ] = useState(filters.q);
+  const [debouncedQ, setDebouncedQ] = useState(filters.q.trim());
   const { embed, status: modelStatus } = useQueryEmbedding();
-
-  const { data: captures, isLoading: capturesLoading } = useCachedQuery(
-    api.captures.byCategoryAndKind,
-    { category: selected || "unsorted", kind: selectedKind }
-  );
-
-
   const searchRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const activeCount = countActiveFilters(filters);
+  const panelFilters = activeCount - (filters.types.length ? 1 : 0);
+  const [panelOpen, setPanelOpen] = useState(panelFilters > 0);
+  // Remounts the panel on "Clear filters", resetting its local state (a custom date range left open).
+  const [panelKey, setPanelKey] = useState(0);
+
+  // 300 ms debounce; clearing the field browses at once.
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+  const query = q.trim() ? debouncedQ : "";
+
+  // The URL follows the debounced query, so a refresh or a shared link searches again.
+  useEffect(() => {
+    if (query !== filters.q.trim()) setFilters({ q: query });
+  }, [query, filters.q, setFilters]);
+
+  // A colour set from a swatch shows up in the panel.
+  useEffect(() => {
+    if (filters.color) setPanelOpen(true);
+  }, [filters.color]);
 
   // Cmd/Ctrl-K focuses search from anywhere, matching the badge in the field.
   useEffect(() => {
@@ -134,178 +128,119 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const tabs = useMemo(
-    () => [
-      { key: "image" as const, label: "Images", Icon: Images },
-      { key: "screenshot" as const, label: "Screenshots", Icon: Camera },
-      { key: "link" as const, label: "Links", Icon: Link },
-      { key: "text" as const, label: "Text", Icon: FileText },
-      // "code" is intentionally hidden from the UI. The kind still exists in the
-      // schema and in stored documents; we just don't offer it as a browse tab.
-      // { key: "code" as const, label: "Code", Icon: Code },
-    ],
-    []
-  );
-
   const { data: counts } = useCachedQuery(api.captures.countsByKind, {});
+  const { data: sessionData } = useCachedQuery(api.sessions.listSessions, { limit: 100, thumbsPerSession: 0 });
+  const sessions = sessionData?.sessions;
 
-  // Undefined while the count query is in flight; an em dash reads better than
-  // a flash of "0" that then corrects itself.
-  // The Screenshots tab also lists picked-element and viewport shots (the
-  // backend merges them into the "screenshot" listing), so count them too.
-  const countFor = useCallback(
-    (kind: Kind): string => {
-      if (!counts) return "—";
-      const kinds: string[] = kind === "screenshot" ? ["screenshot", "element", "viewport"] : [kind];
-      return String(kinds.reduce((sum, k) => sum + (counts[k] ?? 0), 0));
-    },
-    [counts]
-  );
-
-  const searching = !!q.trim();
-  const modelLoading = modelStatus === "loading";
-
-  // Hybrid search: the query vector comes from the extension when it is
-  // installed and answers in time, else the same action runs keyword-only.
-  // Debounced, and a newer keystroke discards an older response.
-  //
-  // While the model is still loading (a cold start can take minutes), no
-  // search waits for the vector: keyword results show at once and the query
-  // still goes to the extension. Its first vector turns the status "ready",
-  // which re-runs this effect for the current query, now hybrid.
+  // The URL's session must be one of the user's before it is sent: the
+  // backend's id validator throws on an id from another table. Unknown ones
+  // (garbage, deleted, or older than the 100 listed) are dropped from the URL.
+  const sessionOk = !filters.session || !!sessions?.some((s) => s.id === filters.session);
   useEffect(() => {
-    const query = q.trim();
-    if (!query) {
-      setSearch(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      let vector: number[] | null = null;
-      if (modelLoading) {
-        void embed(query).catch(() => null);
-      } else {
-        // Resolves to null within ~3s (DEFAULT_EMBED_TIMEOUT_MS) when the
-        // extension is missing, errors or is slow; the catch is belt and braces.
-        vector = await embed(query).catch(() => null);
-      }
-      if (cancelled) return;
-      try {
-        const args = buildSearchArgs(query, selectedKind, vector ? { vector } : {});
-        const { results } = await runSearch(args).catch((err) => {
-          // A vector the backend refuses (say, an extension on another model)
-          // must not cost the user their results: retry by keyword.
-          if (!vector) throw err;
-          console.warn("Hybrid search failed, retrying by keyword:", err);
-          return runSearch(buildSearchArgs(query, selectedKind));
-        });
-        if (!cancelled) setSearch({ kind: selectedKind, rows: results });
-      } catch (err) {
-        console.error("Search failed:", err);
-        if (!cancelled) setSearch({ kind: selectedKind, rows: [] });
-      }
-    }, 300);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [q, selectedKind, runSearch, embed, modelLoading]);
+    if (filters.session && sessions && !sessionOk) setFilters({ session: null });
+  }, [filters.session, sessions, sessionOk, setFilters]);
 
-  // Search rows reshaped into what each tab's layout reads.
-  const searchRows = search && search.kind === selectedKind ? search.rows : null;
-  const searchItems = useMemo(
-    () =>
-      searchRows?.map((r) => ({
-        _id: r.id,
-        kind: r.kind,
-        url: r.imageUrl ?? undefined,
-        thumbUrl: r.thumbUrl ?? null,
-        designDna: (r.designDna as CaptureDetails["designDna"]) ?? null,
-        palette: (r.palette as CaptureDetails["palette"]) ?? null,
-        clipped: r.clipped ?? null,
-        pageUrl: r.pageUrl ?? undefined,
-        width: r.width || 600,
-        height: r.height || 400,
-        alt: r.alt || r.title || "",
-        tags: r.tags || [],
-        storageId: r.storageId ?? undefined,
-        status: r.status,
-        error: r.error,
-        aiCategory: r.aiCategory,
-        aiTags: r.aiTags,
-        // text / link layouts
-        content: r.content ?? "",
-        href: r.href ?? "",
-        text: r.text ?? undefined,
-        title: r.title ?? undefined,
-        category: r.category ?? undefined,
-        timestamp: r.timestamp,
-      })) ?? null,
-    [searchRows]
+  // Date presets start at local midnight, so the arguments (and the queries
+  // they key) change once a day, not on every render.
+  const rawArgs = filtersToArgs(filters, Date.now(), sessionOk ? filters.session : null);
+  const filterArgs = useStableByKey<FeedFilterArgs>(rawArgs, argsKey(rawArgs));
+
+  const feed = useCaptureFeed({
+    query,
+    filters: filterArgs,
+    enabled: sessionOk,
+    embed,
+    modelLoading: modelStatus === "loading",
+  });
+
+  const pickColor = useCallback(
+    (hex: string) => setFilters({ color: normalizeHexColor(hex) }),
+    [setFilters]
   );
+  const onClearFilters = () => {
+    setFilters(clearFilters);
+    setPanelKey((k) => k + 1);
+  };
+  const onClearSearch = () => {
+    setQ("");
+    setDebouncedQ("");
+  };
 
-  const visible = searching && searchItems ? searchItems : captures;
-  const total = Array.isArray(visible) ? visible.length : 0;
-
-  // Loading and empty look identical if you only test length, which is what
-  // made the empty state flash before content arrived. Only the absence of a
-  // resolved result counts as loading.
-  const isLoading = searching ? searchItems === null : capturesLoading;
+  const searching = !!query;
+  const libraryTotal = counts ? (counts.all ?? 0) - (counts.code ?? 0) : null;
+  const emptyKind: EmptyKind = feed.failed
+    ? "error"
+    : libraryTotal === 0 || (libraryTotal === null && !searching && activeCount === 0)
+      ? "library"
+      : "noMatches";
+  const total = feed.rows?.length ?? 0;
+  const onlyLists = filters.types.length > 0 && filters.types.every((t) => t === "link" || t === "text");
 
   return (
-    <main id="main-content" className="flex-1 flex flex-col w-full">
+    <main id="main-content" className="flex min-w-0 flex-1 flex-col w-full">
       <header
         id="dashboard-header"
-        className="flex h-14 shrink-0 items-center justify-between gap-6 border-b border-[var(--border)] px-6"
+        className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-[var(--border)] px-4 py-2.5 sm:px-6"
       >
-        {/* Underlined tabs rather than pills: the rule sits on the same baseline
-            as the border below, so the header reads as one continuous edge. */}
-        <nav id="tabs" className="flex h-full items-stretch gap-6">
-          {tabs.map(({ key, label }) => {
-            const active = selectedKind === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setSelectedKind(key)}
-                className={`relative flex items-center gap-1.5 text-[13px] transition-colors ${active
-                    ? "text-[var(--text)]"
-                    : "text-[var(--text-muted)] hover:text-[var(--text)]"
-                  }`}
-              >
-                <span>{label}</span>
-                <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">
-                  {countFor(key)}
-                </span>
-                {active && (
-                  <span className="absolute inset-x-0 -bottom-px h-px bg-[var(--text)]" />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <TypeChips selected={filters.types} counts={counts} onChange={(types) => setFilters({ types })} />
 
-        <div className="flex items-center gap-2">
-          <div className="relative w-[300px]">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:w-[300px] sm:flex-none">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-subtle)]" />
             <input
               ref={searchRef}
               type="text"
+              aria-label="Search captures"
               placeholder="Search captures"
               className="input-field pl-8 pr-12"
               value={q}
+              maxLength={500}
               onChange={(e) => setQ(e.target.value)}
             />
-            <span className="kbd pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
-              ⌘K
-            </span>
+            <span className="kbd pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">⌘K</span>
           </div>
-          <button className="btn-secondary">Filter</button>
+          <button
+            type="button"
+            className="btn-secondary shrink-0"
+            aria-expanded={panelOpen}
+            aria-controls="filter-panel"
+            onClick={() => setPanelOpen((o) => !o)}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Filters
+            {activeCount > 0 && (
+              <span className="chip-count" aria-label={`${activeCount} active`}>
+                {activeCount}
+              </span>
+            )}
+          </button>
+          {activeCount > 0 && (
+            <button
+              type="button"
+              className="shrink-0 text-[12px] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+              onClick={onClearFilters}
+            >
+              Clear
+            </button>
+          )}
         </div>
       </header>
 
-      <div className="flex shrink-0 items-center justify-between px-6 pb-1 pt-4">
-        <p className="text-[12px] text-[var(--text-muted)]">
-          {isLoading ? " " : `${total} ${total === 1 ? "capture" : "captures"}`}
+      {panelOpen && (
+        <FilterPanel
+          key={panelKey}
+          id="filter-panel"
+          filters={filters}
+          setFilters={setFilters}
+          sessions={sessions}
+        />
+      )}
+
+      <div className="flex shrink-0 items-center justify-between px-4 pb-1 pt-4 sm:px-6">
+        <p className="text-[12px] text-[var(--text-muted)]" aria-live="polite">
+          {feed.rows === null || feed.stale
+            ? " "
+            : `${total}${feed.isDone ? "" : "+"} ${total === 1 ? "capture" : "captures"}`}
         </p>
         <p className="text-[12px] text-[var(--text-muted)]">
           {/* Shown only while the extension's model is still loading for the first time. */}
@@ -313,56 +248,40 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div id="content-area" className="flex-1 overflow-y-auto px-6 pb-6 pt-2">
-        {isLoading ? (
-          selectedKind === "image" || selectedKind === "screenshot" ? (
-            <MasonrySkeleton />
-          ) : (
-            <ListSkeleton />
-          )
-        ) : total === 0 ? (
-          <EmptyState searching={searching} />
-        ) : (
-          <>
-            {(selectedKind === "image" || selectedKind === "screenshot") && (
-              <MasonryLayout items={visible as DisplayItem[]} />
-            )}
-            {selectedKind === "text" && (
-              <TextWrapLayout
-                items={
-                  visible as unknown as Array<{
-                    _id: string;
-                    kind: "text";
-                    content: string;
-                    url: string;
-                    timestamp: number;
-                    category?: string;
-                  }>
-                }
-              />
-            )}
-            {selectedKind === "link" && (
-              <LinkList
-                items={
-                  (visible as unknown as Array<{
-                    _id: string;
-                    kind: "link";
-                    href: string;
-                    text?: string;
-                    url: string;
-                    title?: string;
-                    timestamp: number;
-                    category?: string;
-                    tags?: string[];
-                  }>)
-                }
-              />
-            )}
-          </>
-        )}
+      <div ref={contentRef} id="content-area" className="flex-1 overflow-y-auto px-4 pb-6 pt-2 sm:px-6">
+        <CaptureGrid
+          feed={feed}
+          listSkeleton={onlyLists}
+          scrollRoot={contentRef}
+          onPickColor={pickColor}
+          emptyState={
+            <EmptyState
+              kind={emptyKind}
+              canClearFilters={activeCount > 0}
+              canClearSearch={searching}
+              onClearFilters={onClearFilters}
+              onClearSearch={onClearSearch}
+            />
+          }
+        />
       </div>
 
       <MaximizedText />
     </main>
+  );
+}
+
+export default function DashboardPage() {
+  // useSearchParams needs a Suspense boundary wherever a page could be prerendered.
+  return (
+    <Suspense
+      fallback={
+        <main className="flex-1 p-6">
+          <MasonrySkeleton />
+        </main>
+      }
+    >
+      <Dashboard />
+    </Suspense>
   );
 }

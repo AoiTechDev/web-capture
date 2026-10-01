@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Check } from "lucide-react";
+import { Check, Pipette } from "lucide-react";
+import { normalizeHexColor } from "@/lib/capture-filters";
 
 /* Shapes from spec 6.1 / 6.2 (`DesignDNA`, `PaletteColor`). */
 
@@ -51,40 +52,67 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-/** A colour chip whose hex copies to the clipboard on click. */
-function Swatch({ hex, weight }: { hex: string; weight: number }) {
+/**
+ * A colour chip whose hex copies to the clipboard on click, with a second
+ * button beside it that filters the library by the colour (when the colour
+ * is a plain hex and the view offers it).
+ */
+function Swatch({ hex, weight, onPickColor }: { hex: string; weight: number; onPickColor?: (hex: string) => void }) {
   const [copied, setCopied] = useState(false);
+  const filterHex = onPickColor ? normalizeHexColor(hex) : null;
   return (
-    <button
-      type="button"
-      title={`Copy ${hex}`}
-      onClick={() => {
-        void navigator.clipboard?.writeText(hex).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        });
-      }}
-      className="flex items-center gap-2 rounded-md border border-[var(--border)] px-1.5 py-1 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--surface-hover)]"
-    >
-      <span
-        className="h-5 w-5 shrink-0 rounded-[4px] border border-white/10"
-        style={{ backgroundColor: hex }}
-      />
-      <span className="mono text-[11px] text-[var(--text)]">{copied ? "Copied" : hex}</span>
-      {copied ? (
-        <Check className="h-3 w-3 text-[var(--text-muted)]" />
-      ) : (
-        <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">{pct(weight)}</span>
+    <span className="inline-flex overflow-hidden rounded-md border border-[var(--border)] transition-colors hover:border-[var(--border-strong)]">
+      <button
+        type="button"
+        title={`Copy ${hex}`}
+        aria-label={copied ? `Copied ${hex}` : `Copy ${hex}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(hex).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          });
+        }}
+        className="flex items-center gap-2 px-1.5 py-1 text-left transition-colors hover:bg-[var(--surface-hover)]"
+      >
+        <span
+          className="h-5 w-5 shrink-0 rounded-[4px] border border-white/10"
+          style={{ backgroundColor: hex }}
+        />
+        <span className="mono text-[11px] text-[var(--text)]" aria-live="polite">
+          {copied ? "Copied" : hex}
+        </span>
+        {copied ? (
+          <Check className="h-3 w-3 text-[var(--text-muted)]" />
+        ) : (
+          <span className="text-[11px] tabular-nums text-[var(--text-subtle)]">{pct(weight)}</span>
+        )}
+      </button>
+      {filterHex && onPickColor && (
+        <button
+          type="button"
+          title={`Show captures with ${filterHex}`}
+          aria-label={`Filter library by ${filterHex}`}
+          onClick={() => onPickColor(filterHex)}
+          className="flex items-center border-l border-[var(--border)] px-1.5 text-[var(--text-subtle)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text)]"
+        >
+          <Pipette className="h-3 w-3" />
+        </button>
       )}
-    </button>
+    </span>
   );
 }
 
-function SwatchGrid({ colors }: { colors: { hex: string; weight: number }[] }) {
+function SwatchGrid({
+  colors,
+  onPickColor,
+}: {
+  colors: { hex: string; weight: number }[];
+  onPickColor?: (hex: string) => void;
+}) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {colors.map((c, i) => (
-        <Swatch key={`${c.hex}-${i}`} hex={c.hex} weight={c.weight} />
+        <Swatch key={`${c.hex}-${i}`} hex={c.hex} weight={c.weight} onPickColor={onPickColor} />
       ))}
     </div>
   );
@@ -103,11 +131,19 @@ function ValueChips({ values }: { values: { value: number; weight: number }[] })
 }
 
 /**
- * Side panel for the full-size view: the Design DNA of a picked element and
- * the pixel palette of any image capture. Renders nothing for captures that
- * have neither (everything saved before they existed).
+ * The detail view's Design DNA sections: the DNA of a picked element and the
+ * pixel palette of any image capture. Renders nothing for captures that have
+ * neither (everything saved before they existed). The caller supplies the
+ * scrolling side panel it sits in.
  */
-export default function DesignDnaPanel({ details }: { details: CaptureDetails }) {
+export default function DesignDnaPanel({
+  details,
+  onPickColor,
+}: {
+  details: CaptureDetails;
+  /** Filter the library by a swatch's colour. */
+  onPickColor?: (hex: string) => void;
+}) {
   if (!hasDetails(details)) return null;
   const dna = details.designDna;
   const palette = details.palette ?? [];
@@ -117,8 +153,8 @@ export default function DesignDnaPanel({ details }: { details: CaptureDetails })
     .filter((g) => g.colors.length > 0);
 
   return (
-    <aside className="flex max-h-[40vh] w-full shrink-0 flex-col overflow-y-auto border-t border-[var(--border)] bg-[var(--surface)] md:max-h-[90vh] md:w-[320px] md:border-l md:border-t-0">
-      <div className="px-4 py-3">
+    <>
+      <div className="border-t border-[var(--border)] px-4 py-3">
         <h2 className="text-[13px] font-medium text-[var(--text)]">
           {dna ? "Design DNA" : "Palette"}
         </h2>
@@ -133,7 +169,7 @@ export default function DesignDnaPanel({ details }: { details: CaptureDetails })
             {byUsage.map((g) => (
               <div key={g.usage}>
                 <p className="mb-1 text-[12px] text-[var(--text-muted)]">{USAGE_LABEL[g.usage]}</p>
-                <SwatchGrid colors={g.colors} />
+                <SwatchGrid colors={g.colors} onPickColor={onPickColor} />
               </div>
             ))}
           </div>
@@ -147,7 +183,7 @@ export default function DesignDnaPanel({ details }: { details: CaptureDetails })
               <span key={`${p.hex}-${i}`} style={{ backgroundColor: p.hex, flexGrow: p.weight }} />
             ))}
           </div>
-          <SwatchGrid colors={palette} />
+          <SwatchGrid colors={palette} onPickColor={onPickColor} />
         </Section>
       )}
 
@@ -199,6 +235,6 @@ export default function DesignDnaPanel({ details }: { details: CaptureDetails })
           <ValueChips values={dna.spacing} />
         </Section>
       )}
-    </aside>
+    </>
   );
 }
