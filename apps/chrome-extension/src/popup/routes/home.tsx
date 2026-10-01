@@ -5,6 +5,7 @@ import { SessionPanel } from "~popup/components/session-panel"
 const SHORTCUTS: [string, string][] = [
   ["Ctrl+Shift+S", "Pick an element to save"],
   ["↑ ↓ Enter", "While picking: parent, child, save"],
+  ["Ctrl+Shift+Y", "Pick an image to save (original file)"],
   ["Ctrl+Shift+E", "Screenshot a region"],
   ["Ctrl+Shift+X", "Save selected text"],
   ["Ctrl+Shift+L", "Save this page as a link"],

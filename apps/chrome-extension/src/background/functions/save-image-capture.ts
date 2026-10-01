@@ -18,7 +18,17 @@ export const saveImageCapture = async ({
     msg: any;
     convex: ConvexClient;
 }): Promise<{ sessionName: string | null }> => {
-    const imageResp = await fetch(msg.data.src);
+    // The image picker sends its best guess at the original first and what the
+    // page displays as fallbacks; everyone else sends just `src`.
+    const fallbacks: string[] = Array.isArray(msg.data.fallbackSrcs) ? msg.data.fallbackSrcs : [];
+    let src: string = msg.data.src;
+    let imageResp = await fetch(src).catch(() => null);
+    for (const fallback of fallbacks) {
+      if (imageResp?.ok) break;
+      src = fallback;
+      imageResp = await fetch(src).catch(() => null);
+    }
+    if (!imageResp) throw new Error('Failed to download image');
     if (!imageResp.ok) throw new Error(`Failed to download image (HTTP ${imageResp.status})`);
     const blob = await imageResp.blob();
     assertImageSize(blob);
@@ -39,7 +49,7 @@ export const saveImageCapture = async ({
       storageId,
       thumbStorageId: extras.thumbStorageId,
       palette: extras.palette,
-      src: msg.data.src,
+      src,
       alt: msg.data.alt ?? undefined,
       url: msg.data.url || 'unknown',
       timestamp: Date.now(),

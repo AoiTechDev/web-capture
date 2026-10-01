@@ -3,7 +3,15 @@ import "./styles/index.css"
 import { showAuthNotification } from "./features/auth/auth-notification"
 import { checkAuth } from "./features/auth/check-auth"
 import { toggleSearchOverlay, closeSearchOverlay, isSearchOverlayOpen } from "./features/search/search-overlay"
-import { cleanup, toggleSelectionMode, startScreenshotMode, exitAllModes } from "./features/capture"
+import {
+  cleanup,
+  toggleSelectionMode,
+  startScreenshotMode,
+  exitAllModes,
+  exitImagePickerMode,
+  toggleImagePickerMode,
+  isInImagePickerMode,
+} from "./features/capture"
 import { captureViewport } from "./features/capture/screenshot-capture"
 import { captureSelectedText } from "./features/capture/selected-text-capture"
 import { captureCurrentPageLink } from "./features/capture/capture-link"
@@ -69,6 +77,7 @@ document.addEventListener(
             showAuthNotification()
             return
           }
+          exitImagePickerMode()
           toggleSelectionMode(false)
           activeMode = "selection-basic"
         })()
@@ -93,6 +102,7 @@ document.addEventListener(
             showAuthNotification()
             return
           }
+          exitImagePickerMode()
           toggleSelectionMode(true)
           activeMode = "selection-category"
         })()
@@ -146,10 +156,34 @@ document.addEventListener(
             showAuthNotification()
             return
           }
+          exitImagePickerMode()
           startScreenshotMode()
           activeMode = "screenshot"
         })()
       }
+    }
+
+    // Ctrl/Cmd + Shift + Y - Toggle the image picker (saves the original file)
+    if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "Y") {
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (isInImagePickerMode()) {
+        toggleImagePickerMode()
+      } else {
+        void (async () => {
+          const isAuthenticated = await checkAuth()
+          if (!isAuthenticated) {
+            showAuthNotification()
+            return
+          }
+          // One pick mode at a time; the picker clears its own state on Esc.
+          exitAllModes()
+          activeMode = null
+          toggleImagePickerMode()
+        })()
+      }
+      return
     }
 
     // Ctrl/Cmd + Shift + G - Start or finish a capture session
@@ -201,6 +235,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         showAuthNotification()
         return
       }
+      exitImagePickerMode()
       startScreenshotMode()
       activeMode = "screenshot"
     })()
