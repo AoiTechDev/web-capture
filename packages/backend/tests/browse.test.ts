@@ -131,7 +131,7 @@ describe("browse: filters", () => {
     const ids = async (args: BrowseArgs) => (await browse(t, args)).results.map((x) => x.id);
     expect(await ids({ kinds: ["text", "link"] })).toEqual([w.link, w.text]);
     expect(await ids({ aiCategories: ["hero"] })).toEqual([w.heroBlue, w.heroRed]);
-    expect(await ids({ aiCategory: "pricing" })).toEqual([w.pricingBlue]);
+    expect(await ids({ aiCategories: ["pricing"] })).toEqual([w.pricingBlue]);
     expect(await ids({ sessionId: w.s1 })).toEqual([w.pricingBlue, w.heroRed]);
     expect(await ids({ color: "#0000ff" })).toEqual([w.heroBlue, w.pricingBlue]);
     expect(await ids({ color: "#f00" })).toEqual([w.heroRed]);
@@ -195,6 +195,7 @@ describe("browse: filters", () => {
           a: -60,
           b: 40,
           weight: 0.5,
+          significant: true,
         });
       }
     });

@@ -27,8 +27,6 @@ export type RawFilters<S extends string = string> = {
   sessionId?: S;
   kinds?: string[];
   aiCategories?: string[];
-  /** Legacy single category, folded into `aiCategories`. */
-  aiCategory?: string;
   color?: string;
   colorTolerance?: number;
   dateFrom?: number;
@@ -81,10 +79,7 @@ export function normalizeHex(input: string): string {
  */
 export function normalizeFilters<S extends string>(raw: RawFilters<S>): SearchFilters<S> {
   const kinds = uniqueList(raw.kinds, "kinds");
-  const listed = uniqueList(raw.aiCategories, "aiCategories") ?? [];
-  // The legacy single category widens the list (OR within categories).
-  const merged = raw.aiCategory !== undefined ? Array.from(new Set([...listed, raw.aiCategory])) : listed;
-  const categories = merged.length ? merged : undefined;
+  const categories = uniqueList(raw.aiCategories, "aiCategories");
   const dateFrom = dateBound(raw.dateFrom, "dateFrom");
   const dateTo = dateBound(raw.dateTo, "dateTo");
   if (dateFrom !== undefined && dateTo !== undefined && dateFrom > dateTo) {
@@ -123,16 +118,58 @@ export function clampLimit(limit: number | undefined): number {
  * L-bar = 0 or 100, rounded up.
  */
 const MAX_SL = 1.75;
+/** Refinement steps of each side of the L band; the third barely moves it. */
+const BAND_STEPS = 3;
+/** Floating-point slack, so rounding in deltaE2000 can never put a match outside the band. */
+const BAND_SLACK = 1e-9;
+
+/** CIEDE2000's lightness weight S_L at mean lightness `lbar`; grows with |lbar - 50|. */
+export function lightnessWeight(lbar: number): number {
+  const d2 = (lbar - 50) ** 2;
+  return 1 + (0.015 * d2) / Math.sqrt(20 + d2);
+}
 
 /**
- * How far a colour's L may be from the target's and still lie within
- * `tolerance` (ΔE2000). ΔE² = (ΔL/S_L)² + Q, where Q = x² + y² + R_T·x·y
- * with x = ΔC/S_C, y = ΔH/S_H and |R_T| <= 2·sin 60° < 2, so Q >= (|x|-|y|)²
- * >= 0. Hence ΔE >= |ΔL|/S_L and |ΔL| <= tolerance · MAX_SL: an index range
- * on L that wide drops no match.
+ * The L range a colour within `tolerance` (ΔE2000) of a target with
+ * lightness `targetL` can lie in, for the by_user_significant_l index range.
+ *
+ * Why it never drops a match. ΔE² = (ΔL/S_L)² + Q, where Q = x² + y² +
+ * R_T·x·y with x = ΔC/S_C, y = ΔH/S_H and |R_T| <= 2, so Q >= (|x|-|y|)² >= 0.
+ * Hence a match (ΔE < tol) at distance d = |L - targetL| has
+ *   d < tol · S_L(L-bar),  L-bar = targetL ± d/2 (the pair's mean lightness).   (1)
+ * Take one side, say L above the target. B0 = tol · MAX_SL bounds d, as
+ * S_L <= MAX_SL. If every match has d <= B, then by (1) every match has
+ *   d < tol · max{ S_L(x) : x in [targetL, targetL + B/2] }  =: B'.
+ * S_L depends only on |x - 50| and grows with it, so that maximum is at one
+ * of the two ends: B' = tol · max(S_L(targetL), S_L(targetL + B/2)). So B'
+ * is again a bound, and B' <= B (the interval only shrinks). Iterating keeps
+ * a valid bound that tightens towards the true one. Taking S_L at the band's
+ * mid-point alone would not be safe: moving towards L = 50, S_L falls along
+ * the way, and its value there would undercut matches close to the target.
+ * The other side is the same with targetL - B/2. Intervals reaching past
+ * 0 or 100 only overstate S_L, so the bound holds there too.
+ *
+ * At L = 50 and tolerance 10 this is ±10.6 rather than ±17.5.
  */
-export function lightnessBand(tolerance: number): number {
-  return tolerance * MAX_SL;
+export function lightnessRange(targetL: number, tolerance: number): [number, number] {
+  const side = (dir: 1 | -1) => {
+    let band = tolerance * MAX_SL;
+    for (let i = 0; i < BAND_STEPS; i++) {
+      const sl = Math.max(lightnessWeight(targetL), lightnessWeight(targetL + (dir * band) / 2));
+      band = Math.min(band, tolerance * sl);
+    }
+    return band * (1 + BAND_SLACK) + BAND_SLACK;
+  };
+  return [targetL - side(-1), targetL + side(1)];
+}
+
+/**
+ * Whether a captureColors row with this weight can ever match a colour
+ * filter; stored on the row as `significant`, so the filter's index range
+ * skips the rest.
+ */
+export function isSignificantColor(weight: number): boolean {
+  return weight > FILTER_LIMITS.minColorWeight;
 }
 
 /** Whether one captureColors row satisfies the colour filter. */
@@ -141,7 +178,7 @@ export function colorRowMatches(
   row: { l: number; a: number; b: number; weight: number },
   tolerance: number
 ): boolean {
-  return row.weight > FILTER_LIMITS.minColorWeight && deltaE2000(target, [row.l, row.a, row.b]) < tolerance;
+  return isSignificantColor(row.weight) && deltaE2000(target, [row.l, row.a, row.b]) < tolerance;
 }
 
 /* ---------- cursors ---------- */
@@ -153,6 +190,10 @@ export function colorRowMatches(
 export type BrowseCursor = { t: number; id: string };
 
 const ID_RE = /^[A-Za-z0-9_;]{1,64}$/;
+/** A non-negative integer with no sign, exponent or leading zeros. */
+const INT_RE = /^(0|[1-9][0-9]{0,15})$/;
+/** A creation time as String(number) writes one: integer part and optional decimals. */
+const TIME_RE = /^(0|[1-9][0-9]{0,15})(\.[0-9]{1,12})?$/;
 
 function checkCursor(cursor: string): string[] {
   if (cursor.length > FILTER_LIMITS.maxCursorChars) throw new Error("Invalid cursor");
@@ -165,30 +206,43 @@ export function encodeBrowseCursor(c: BrowseCursor): string {
 
 export function decodeBrowseCursor(cursor: string): BrowseCursor {
   const [tag, t, id, ...rest] = checkCursor(cursor);
-  const time = Number(t);
-  if (tag !== "b" || rest.length || !t || !Number.isFinite(time) || time < 0 || !ID_RE.test(id ?? "")) {
+  if (tag !== "b" || rest.length || !TIME_RE.test(t ?? "") || !ID_RE.test(id ?? "")) {
     throw new Error("Invalid cursor");
   }
-  return { t: time, id: id! };
+  return { t: Number(t), id: id! };
 }
 
-/** Search position: an offset into the fused, ranked list. */
-export function encodeSearchCursor(offset: number): string {
-  return `s|${offset}`;
+/** How a search ranked its first page; later pages keep it. */
+export type SearchMode = "exact" | "index";
+
+/**
+ * Search position: an offset into the fused, ranked list, plus what keeps
+ * that offset meaning the same thing on later pages. `snapshot` is the
+ * newest creation time the first page could see: later pages ignore
+ * captures created after it, so new captures cannot shift the list under
+ * the offset. `mode` is the ranking the first page used.
+ */
+export type SearchCursor = { offset: number; snapshot: number; mode: SearchMode };
+
+export function isSearchCursor(cursor: string): boolean {
+  return cursor.startsWith("s|");
 }
 
-export function decodeSearchCursor(cursor: string): number {
-  const [tag, n, ...rest] = checkCursor(cursor);
-  const offset = Number(n);
+export function encodeSearchCursor(c: SearchCursor): string {
+  return `s|${c.offset}|${c.snapshot}|${c.mode}`;
+}
+
+export function decodeSearchCursor(cursor: string): SearchCursor {
+  const [tag, n, t, mode, ...rest] = checkCursor(cursor);
   if (
     tag !== "s" ||
     rest.length ||
-    !n ||
-    !Number.isInteger(offset) ||
-    offset < 0 ||
-    offset > FILTER_LIMITS.maxSearchOffset
+    !INT_RE.test(n ?? "") ||
+    Number(n) > FILTER_LIMITS.maxSearchOffset ||
+    !TIME_RE.test(t ?? "") ||
+    (mode !== "exact" && mode !== "index")
   ) {
     throw new Error("Invalid cursor");
   }
-  return offset;
+  return { offset: Number(n), snapshot: Number(t), mode };
 }

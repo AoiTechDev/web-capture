@@ -303,10 +303,10 @@ describe("dashboard queries: thumbUrl, DNA, legacy captures, isolation", () => {
     expect(thumbs).toContain(thumbUrl);
   });
 
-  test("searchCapturesFallback returns thumbUrl and DNA for own captures", async () => {
+  test("browseCaptures returns thumbUrl and DNA for own captures", async () => {
     const { t, newA } = await world();
-    const res = (await t.withIdentity(userA).query(api.search.searchCapturesFallback, { q: "page.example" })) as any;
-    const fresh = res.results.find((r: any) => r.id === newA.id);
+    const res = await t.withIdentity(userA).query(api.browse.browseCaptures, {});
+    const fresh = res.results.find((r) => r.id === newA.id) as any;
     expect(typeof fresh.thumbUrl).toBe("string");
     expect(fresh.designDna.source.title).toBe("DNA_SECRET_TITLE");
   });
@@ -320,12 +320,12 @@ describe("dashboard queries: thumbUrl, DNA, legacy captures, isolation", () => {
     const outputs = [
       await asA.query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "screenshot" }),
       await asA.query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "element" }),
-      await asA.query(api.captures.listAllForUser, {}),
+      await asA.query(api.browse.browseCaptures, {}),
       await asA.query(api.captures.getCaptureById, { id: newB.id }),
       await asA.query(api.sessions.getSession, { id: b.sessionId }),
       await asA.query(api.sessions.getSession, { id: a.sessionId }),
       await asA.query(api.sessions.listSessions, {}),
-      await asA.query(api.search.searchCapturesFallback, { q: "page.example" }),
+      await asA.action(api.search.searchCaptures, { query: "page.example" }),
     ];
     for (const out of outputs) {
       const json = JSON.stringify(out);

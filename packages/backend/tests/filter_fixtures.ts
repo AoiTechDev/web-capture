@@ -7,6 +7,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import type { AiCategory } from "../convex/schema";
 import { hexToLab, type Lab } from "../convex/lib/color";
 import { buildSearchText } from "../convex/lib/search_rank";
+import { isSignificantColor } from "../convex/lib/search_filters";
 import { DIM, type T } from "./fixtures";
 
 /** Unit vector along axis `i`. */
@@ -74,18 +75,32 @@ export async function addCapture(t: T, userId: string, o: CaptureOpts = {}): Pro
   });
 }
 
-/** One captureColors row; `color` is a hex or a raw LAB triple. */
+/**
+ * One captureColors row; `color` is a hex or a raw LAB triple. `significant`
+ * is set from the weight as saveImageCapture sets it, unless `legacy`
+ * (a row written before the field existed).
+ */
 export async function addColor(
   t: T,
   captureId: Id<"captures">,
   userId: string,
   color: string | Lab,
-  weight = 0.5
+  weight = 0.5,
+  legacy = false
 ) {
   const lab = typeof color === "string" ? hexToLab(color)! : color;
   const hex = typeof color === "string" ? color : "#000000";
   return await t.run((ctx) =>
-    ctx.db.insert("captureColors", { captureId, userId, hex, l: lab[0], a: lab[1], b: lab[2], weight })
+    ctx.db.insert("captureColors", {
+      captureId,
+      userId,
+      hex,
+      l: lab[0],
+      a: lab[1],
+      b: lab[2],
+      weight,
+      ...(legacy ? {} : { significant: isSignificantColor(weight) }),
+    })
   );
 }
 

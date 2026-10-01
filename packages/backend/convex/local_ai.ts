@@ -18,6 +18,7 @@ import { assertLocalEmbedding } from "./helpers";
 import { aiCategoryValidator } from "./schema";
 import { AI_MAX_ATTEMPTS, AI_STALE_PROCESSING_MS, LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
 import { buildSearchText } from "./lib/search_rank";
+import { normalizeUserTags, TEXT_CAPS, truncateUtf8 } from "./lib/capture_text";
 
 /* ---------- helpers ---------- */
 
@@ -98,8 +99,9 @@ export const applyAutoMetadata = mutation({
     const doc = await ownCapture(ctx, id);
 
     const patch: { tags?: string[]; domain?: string } = {};
-    if (tags && tags.length) patch.tags = tags;
-    if (domain) patch.domain = domain;
+    const cleanTags = normalizeUserTags(tags ?? []);
+    if (cleanTags.length) patch.tags = cleanTags;
+    if (domain) patch.domain = truncateUtf8(domain, TEXT_CAPS.domain);
     if (Object.keys(patch).length === 0) return { ok: true, patched: false } as const;
 
     await ctx.db.patch(id, { ...patch, searchText: buildSearchText({ ...(doc as any), ...patch }) });

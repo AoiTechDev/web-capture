@@ -46,7 +46,7 @@ describe("searchCaptures filters (keyword search)", () => {
     expect(sorted(await ids(t, {}))).toEqual(sorted([w.heroRed, w.pricingBlue, w.text, w.heroBlue, w.link]));
     expect(sorted(await ids(t, { kinds: ["text", "link"] }))).toEqual(sorted([w.text, w.link]));
     expect(sorted(await ids(t, { aiCategories: ["hero"] }))).toEqual(sorted([w.heroRed, w.heroBlue]));
-    expect(await ids(t, { aiCategory: "pricing" })).toEqual([w.pricingBlue]);
+    expect(await ids(t, { aiCategories: ["pricing"] })).toEqual([w.pricingBlue]);
     expect(sorted(await ids(t, { sessionId: w.s2 }))).toEqual(sorted([w.text, w.heroBlue]));
     expect(sorted(await ids(t, { color: "#0000FF" }))).toEqual(sorted([w.pricingBlue, w.heroBlue]));
     const tText = await creationTime(t, w.text);
@@ -135,6 +135,7 @@ describe("colour filter cut-offs", () => {
           a: -60,
           b: 40,
           weight: 0.5,
+          significant: true,
         });
       }
     });
@@ -221,7 +222,8 @@ describe("search paging", () => {
     const all: Id<"captures">[] = [];
     for (let i = 0; i < 5; i++) all.push(await addCapture(t, userA.subject, { title: "alpha" }));
     const p1 = await search(t, { limit: 2 });
-    expect(p1).toMatchObject({ cursor: "s|2", isDone: false });
+    expect(p1).toMatchObject({ isDone: false });
+    expect(p1.cursor).toMatch(/^s\|2\|[0-9.]+\|index$/);
     const p2 = await search(t, { limit: 2, cursor: p1.cursor });
     const p3 = await search(t, { limit: 2, cursor: p2.cursor });
     expect(p3).toMatchObject({ cursor: null, isDone: true });
@@ -243,7 +245,11 @@ describe("search paging", () => {
   test("a cursor past the end gives an empty, finished page", async () => {
     const t = makeT();
     await addCapture(t, userA.subject, { title: "alpha" });
-    expect(await search(t, { cursor: "s|50" })).toMatchObject({ results: [], cursor: null, isDone: true });
+    expect(await search(t, { cursor: "s|50|9000000000000000|index" })).toMatchObject({
+      results: [],
+      cursor: null,
+      isDone: true,
+    });
   });
 });
 
@@ -309,7 +315,9 @@ describe("search: input validation", () => {
     ["a non-finite score override", { minImageScore: Number.NaN }, /minImageScore/],
     ["a malformed cursor", { cursor: "s|x" }, /Invalid cursor/],
     ["a browse cursor in search", { cursor: "b|1|x" }, /Invalid cursor/],
-    ["a search cursor in browse", { query: "", cursor: "s|2" }, /Invalid cursor/],
+    ["an old-format search cursor", { cursor: "s|2" }, /Invalid cursor/],
+    ["a search cursor with an unknown mode", { cursor: "s|2|5|browse" }, /Invalid cursor/],
+    ["a browse cursor with a blank query that is not one", { query: "", cursor: "b|x|y" }, /Invalid cursor/],
     ["too many categories", { aiCategories: Array.from({ length: 33 }, () => "hero") }, /aiCategories has more than/],
     ["the removed folder filter", { folder: "unsorted" }, /folder/],
   ])("refuses %s", async (_name, args, error) => {

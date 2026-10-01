@@ -4,6 +4,8 @@ import type { Id } from "./_generated/dataModel";
 import { captureValidator, designDnaValidator, paletteColorValidator } from "./schema";
 import { normalizeCaptureColors } from "./lib/color";
 import { buildSearchText } from "./lib/search_rank";
+import { capCaptureText, normalizeUserTags, TEXT_CAPS, truncateUtf8 } from "./lib/capture_text";
+import { isSignificantColor } from "./lib/search_filters";
 
 type DesignDna = Infer<typeof designDnaValidator>;
 type PaletteColor = Infer<typeof paletteColorValidator>;
@@ -149,7 +151,8 @@ export const uploadCapture = mutation({
       aiDescription: _aiDescription,
       aiClaim: _aiClaim,
       searchText: _searchText,
-      ...rest
+      truncated: _truncated,
+      ...client
     } = capture as typeof capture & {
       designDna?: unknown;
       palette?: unknown;
@@ -158,21 +161,28 @@ export const uploadCapture = mutation({
       textEmbedding?: unknown;
       imageEmbedding?: unknown;
     };
+    // Text is cut to its caps (lib/capture_text) rather than refused, and
+    // tags normalised as every other path stores them.
+    const { fields: rest, truncated } = capCaptureText(client);
     const c = rest as {
       linkPreviewId?: Id<"link_previews">;
       storageId?: Id<"_storage">;
       category?: string;
+      tags?: string[];
     };
     await assertCaptureRefs(ctx, identity.subject, {
       linkPreviewId: c.linkPreviewId,
       storageId: c.storageId,
     });
+    const tags = c.tags ? { tags: normalizeUserTags(c.tags) } : {};
     return await ctx.db.insert("captures", {
       ...rest,
+      ...tags,
       category: c.category ?? "unsorted",
       userId: identity.subject,
       status: "pending",
-      searchText: buildSearchText(rest as any),
+      searchText: buildSearchText({ ...(rest as any), ...tags }),
+      ...(truncated ? { truncated } : {}),
     });
   },
 });
@@ -225,40 +235,54 @@ export const saveImageCapture = mutation({
     assertColorPayload(designDna, palette);
     await assertCaptureRefs(ctx, identity.subject, { storageId, thumbStorageId });
 
+    const { fields: text, truncated } = capCaptureText({ src, alt, url, category, title, note, tagName });
     const common = {
       storageId,
       thumbStorageId,
       palette,
-      alt,
-      url,
+      alt: text.alt,
+      url: text.url,
       timestamp,
       width,
       height,
-      category: category ?? "unsorted",
-      tags: (tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean),
-      title,
-      note,
+      category: text.category ?? "unsorted",
+      tags: normalizeUserTags(tags ?? []),
+      title: text.title,
+      note: text.note,
       userId: identity.subject,
       status: "pending" as const,
+      ...(truncated ? { truncated } : {}),
     };
     const searchText = buildSearchText(common);
 
     let captureId: Id<"captures">;
     if (kind === "element") {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "element", tagName, clipped, designDna });
+      captureId = await ctx.db.insert("captures", {
+        ...common,
+        searchText,
+        kind: "element",
+        tagName: text.tagName,
+        clipped,
+        designDna,
+      });
     } else if (kind === "viewport") {
       captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "viewport", clipped });
     } else if (kind === "screenshot") {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "screenshot", src: src ?? "" });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "screenshot", src: text.src ?? "" });
     } else {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "image", src: src ?? "" });
+      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "image", src: text.src ?? "" });
     }
 
     // Colours are indexed server-side from what was just validated, so the
     // rows can never disagree with the capture they describe.
     const colors = normalizeCaptureColors(designDna?.colors, palette);
     for (const c of colors) {
-      await ctx.db.insert("captureColors", { captureId, userId: identity.subject, ...c });
+      await ctx.db.insert("captureColors", {
+        captureId,
+        userId: identity.subject,
+        ...c,
+        significant: isSignificantColor(c.weight),
+      });
     }
     return captureId;
   },
@@ -340,11 +364,14 @@ export const createCategory = mutation({
   },
 });
 
-/** Count one more use of each tag in the user's tag list (suggestions), adding new ones. */
+/**
+ * Count one more use of each tag in the user's tag list (suggestions),
+ * adding new ones. Names are normalised as captures store them
+ * (normalizeUserTags, so at most 20 per call). `useCount` counts adds:
+ * removing a tag from a capture does not lower it.
+ */
 export async function recordTagUse(ctx: MutationCtx, userId: string, names: string[]) {
-  const normalized = Array.from(
-    new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))
-  );
+  const normalized = normalizeUserTags(names);
   const now = Date.now();
   for (const name of normalized) {
     const existing = await ctx.db
@@ -394,7 +421,7 @@ export const reassignCaptureCategory = mutation({
       throw new Error("Not found or permission denied");
     }
 
-    const name = newCategory.trim();
+    const name = truncateUtf8(newCategory.trim(), TEXT_CAPS.category).trim();
     const categoryName = name.length > 0 ? name : "unsorted";
 
     const existing = await ctx.db

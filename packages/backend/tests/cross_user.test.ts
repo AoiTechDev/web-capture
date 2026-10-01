@@ -12,9 +12,7 @@ const CASES: Case[] = [
   { name: "captures.byCategoryAndKind(link)", kind: "query", fn: api.captures.byCategoryAndKind, args: () => ({ category: "unsorted", kind: "link" }) },
   { name: "captures.byCategoryAndKind(screenshot)", kind: "query", fn: api.captures.byCategoryAndKind, args: () => ({ category: "unsorted", kind: "screenshot" }) },
   { name: "captures.getCaptureById", kind: "query", fn: api.captures.getCaptureById, args: (a) => ({ id: a.linkId }) },
-  { name: "captures.patchImageCaptionAndEmbedding", kind: "mutation", fn: api.captures.patchImageCaptionAndEmbedding, args: (a) => ({ id: a.shotId, caption: "pwned" }) },
   { name: "captures.setCaptureTags", kind: "mutation", fn: api.captures.setCaptureTags, args: (a) => ({ captureId: a.linkId, tags: ["pwned"] }) },
-  { name: "captures.listAllForUser", kind: "query", fn: api.captures.listAllForUser, args: () => ({}) },
   { name: "captures.countsByKind", kind: "query", fn: api.captures.countsByKind, args: () => ({}) },
   { name: "captures.listCategories", kind: "query", fn: api.captures.listCategories, args: () => ({}) },
   { name: "captures.listTags", kind: "query", fn: api.captures.listTags, args: () => ({}) },
@@ -54,7 +52,6 @@ const CASES: Case[] = [
   { name: "search.searchCaptures(browse)", kind: "action", fn: api.search.searchCaptures, args: () => ({ query: "" }) },
   { name: "browse.browseCaptures", kind: "query", fn: api.browse.browseCaptures, args: () => ({}) },
   { name: "browse.browseCaptures(A session)", kind: "query", fn: api.browse.browseCaptures, args: (a) => ({ sessionId: a.sessionId }) },
-  { name: "search.searchCapturesFallback", kind: "query", fn: api.search.searchCapturesFallback, args: () => ({ q: "link" }) },
   // link_search
   { name: "link_search.searchLinks", kind: "query", fn: api.link_search.searchLinks, args: () => ({ q: "secret example link" }) },
 ];
@@ -159,7 +156,7 @@ describe("cross-user matrix: sanity (userA sees own data)", () => {
     const { t, a } = await seedWorld();
     const asA = t.withIdentity(userA);
     expect(await asA.query(api.captures.getCaptureById, { id: a.linkId })).not.toBeNull();
-    expect((await asA.query(api.captures.listAllForUser, {})).length).toBe(2);
+    expect((await asA.query(api.browse.browseCaptures, {})).results).toHaveLength(2);
     expect((await asA.query(api.sessions.getActiveSession, {}))?.id).toBe(a.sessionId);
     expect(await asA.query(api.sessions.getSession, { id: a.sessionId })).not.toBeNull();
     expect((await asA.query(api.link_search.searchLinks, { q: "secret" })).results).toHaveLength(1);

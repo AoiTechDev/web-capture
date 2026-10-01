@@ -360,7 +360,7 @@ describe("search.searchCaptures", () => {
     expect(await ids("dark forms")).toEqual([]);
   });
 
-  test("searchText follows metadata and AI labels; filters by kind and aiCategory", async () => {
+  test("searchText follows metadata and AI labels; filters by kind and category", async () => {
     const t = makeT();
     const { a } = await seedAB(t);
     const asA = t.withIdentity(userA);
@@ -379,8 +379,8 @@ describe("search.searchCaptures", () => {
       (await asA.action(api.search.searchCaptures, { query: "", ...args } as any)).results.map((r) => r.id);
     expect(await find({ query: "dribbble" })).toEqual([a.shotId]);
     expect(await find({ query: "inspiration headline" })).toEqual([a.shotId]);
-    expect(await find({ query: "hero", aiCategory: "hero" })).toEqual([a.shotId]);
-    expect(await find({ query: "hero", aiCategory: "pricing" })).toEqual([]);
+    expect(await find({ query: "hero", aiCategories: ["hero"] })).toEqual([a.shotId]);
+    expect(await find({ query: "hero", aiCategories: ["pricing"] })).toEqual([]);
     expect(await find({ query: "hero", aiCategories: ["pricing", "hero"] })).toEqual([a.shotId]);
     expect(await find({ query: "hero", kinds: ["screenshot"] })).toEqual([a.shotId]);
     expect(await find({ query: "hero", kinds: ["link"] })).toEqual([]);

@@ -9,21 +9,31 @@ import { v } from "convex/values";
 import { isVisualKind } from "./local_ai";
 import { aiCategoryValidator } from "./schema";
 import { hexToLab, MAX_CAPTURE_COLORS, type Lab } from "./lib/color";
-import { colorRowMatches, lightnessBand, type SearchFilters } from "./lib/search_filters";
+import { colorRowMatches, lightnessRange, type SearchFilters } from "./lib/search_filters";
+import type { ReadBudget } from "./lib/read_budget";
 
 /**
  * Most captures a narrow filter may leave for them to be ranked exhaustively
  * (search: exact cosine over each one's stored vector; browse with a colour:
- * sorted in memory). At ~7 KB per embedded capture that is ~3.5 MB read.
+ * sorted in memory). Loading them also stops at the query's read budget
+ * (lib/read_budget), in which case the shortcut is not taken.
  */
 export const CANDIDATE_CAP = 500;
 
 /**
- * captureColors rows one colour filter reads (~150 B each). Past this the
+ * Significant captureColors rows one colour filter reads. Past this the
  * matching set is incomplete; captures outside it are then checked one by
  * one through by_capture, so results stay exact, just without the shortcut.
+ *
+ * A row is ~200 B (ids, hex, four floats, a flag; budgeted at 256 B), so
+ * 15,001 rows are ~3.7 MiB and 15,001 of the 32,000 documents a query may
+ * read; lib/read_budget adds up the rest of the worst case. The L band
+ * keeps the rows read near what can match: 10,000 captures x 12 colours
+ * spread over L are ~1,200 rows per unit of L, and the band at the default
+ * tolerance is ~21 units wide around mid-greys (~35 at the extremes),
+ * before insignificant rows (weight <= 0.05) are left out by the index.
  */
-export const MAX_COLOR_ROWS = 5000;
+export const MAX_COLOR_ROWS = 15_000;
 
 export const kindValidator = v.union(
   v.literal("image"),
@@ -42,8 +52,6 @@ export const filterArgs = {
   kinds: v.optional(v.array(kindValidator)),
   /** The model's categories (`aiCategory`); a capture matches any of them. */
   aiCategories: v.optional(v.array(aiCategoryValidator)),
-  /** Legacy single category, folded into `aiCategories`. */
-  aiCategory: v.optional(aiCategoryValidator),
   /** "#rgb" or "#rrggbb". */
   color: v.optional(v.string()),
   /** ΔE2000, default 10, clamped to 1..50. */
@@ -126,6 +134,8 @@ export async function toRow(ctx: QueryCtx, d: any, sessionName: SessionNames) {
     aiStyle: (d.aiStyle ?? []) as string[],
     aiTags: (d.aiTags ?? []) as string[],
     aiDescription: (d.aiDescription ?? null) as string | null,
+    /** A text field was cut to its cap when saved (lib/capture_text). */
+    truncated: (d.truncated ?? false) as boolean,
   };
 }
 
@@ -150,17 +160,21 @@ export function hasNarrowFilter(f: Filters): boolean {
   return f.sessionId !== undefined || f.dateFrom !== undefined || f.dateTo !== undefined || f.color !== undefined;
 }
 
+/** Index bounds on `_creationTime`, both inclusive. */
+export type TimeBounds = { atOrBefore?: number; atOrAfter?: number };
+
 /**
  * The caller's captures newest first, through by_user_session when a
  * session is set and by_user otherwise (both end in `_creationTime`), with
- * the date filters (and `atOrBefore`, a page cursor) as the index range.
+ * the date filters and `bounds` (page cursors, a search snapshot) as the
+ * index range.
  */
-export function captureRange(ctx: QueryCtx, userId: string, f: Filters, atOrBefore?: number) {
-  const upper =
-    atOrBefore === undefined ? f.dateTo : f.dateTo === undefined ? atOrBefore : Math.min(f.dateTo, atOrBefore);
+export function captureRange(ctx: QueryCtx, userId: string, f: Filters, bounds: TimeBounds = {}) {
+  const upper = minDefined(f.dateTo, bounds.atOrBefore);
+  const lower = maxDefined(f.dateFrom, bounds.atOrAfter);
   const dates = (q: any) => {
     let r = q;
-    if (f.dateFrom !== undefined) r = r.gte("_creationTime", f.dateFrom);
+    if (lower !== undefined) r = r.gte("_creationTime", lower);
     if (upper !== undefined) r = r.lte("_creationTime", upper);
     return r;
   };
@@ -173,92 +187,182 @@ export function captureRange(ctx: QueryCtx, userId: string, f: Filters, atOrBefo
   return indexed.order("desc");
 }
 
+function minDefined(a: number | undefined, b: number | undefined) {
+  return a === undefined ? b : b === undefined ? a : Math.min(a, b);
+}
+
+function maxDefined(a: number | undefined, b: number | undefined) {
+  return a === undefined ? b : b === undefined ? a : Math.max(a, b);
+}
+
 async function captureHasColor(ctx: QueryCtx, id: Id<"captures">, target: Lab, tolerance: number) {
   const rows = await ctx.db
     .query("captureColors")
     .withIndex("by_capture", (q) => q.eq("captureId", id))
-    .take(MAX_CAPTURE_COLORS * 2);
+    .take(MAX_CAPTURE_COLORS);
   return rows.some((r) => colorRowMatches(target, r, tolerance));
 }
+
+/* ---------- the colour set ---------- */
+
+/**
+ * The captures the colour filter matched, from the significant rows in its
+ * L band. `complete` is false when there were more than MAX_COLOR_ROWS rows;
+ * captures outside `ids` must then be checked one by one.
+ */
+export type ColorSet = { ids: Set<string>; complete: boolean };
+
+/** A ColorSet as an internal function argument: ids in chunks, since a Convex array holds at most 8,192 values. */
+export type ColorSetArg = { ids: Id<"captures">[][]; complete: boolean };
+
+export const colorSetValidator = v.object({ ids: v.array(v.array(v.id("captures"))), complete: v.boolean() });
+
+const ID_CHUNK = 8000;
+
+export function colorSetToArg(set: ColorSet): ColorSetArg {
+  const ids = [...set.ids] as Id<"captures">[];
+  const chunks: Id<"captures">[][] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) chunks.push(ids.slice(i, i + ID_CHUNK));
+  return { ids: chunks, complete: set.complete };
+}
+
+export function colorSetFromArg(arg: ColorSetArg): ColorSet {
+  return { ids: new Set(arg.ids.flat()), complete: arg.complete };
+}
+
+/**
+ * Read the colour filter's matching set. Rows written before `significant`
+ * existed lack it; they are read through the same index (as `undefined`)
+ * until captures.backfillColorSignificance has run, after which that range
+ * is empty.
+ */
+async function readColorSet(ctx: QueryCtx, userId: string, target: Lab, tolerance: number): Promise<ColorSet> {
+  const [lo, hi] = lightnessRange(target[0], tolerance);
+  const band = (significant: true | undefined, n: number) =>
+    ctx.db
+      .query("captureColors")
+      .withIndex("by_user_significant_l", (q) =>
+        q.eq("userId", userId).eq("significant", significant).gte("l", lo).lte("l", hi)
+      )
+      .take(n);
+  const rows = await band(true, MAX_COLOR_ROWS + 1);
+  if (rows.length <= MAX_COLOR_ROWS) rows.push(...(await band(undefined, MAX_COLOR_ROWS + 1 - rows.length)));
+  const complete = rows.length <= MAX_COLOR_ROWS;
+  const ids = new Set<string>();
+  for (const r of rows.slice(0, MAX_COLOR_ROWS)) {
+    if (colorRowMatches(target, r, tolerance)) ids.add(r.captureId);
+  }
+  return { ids, complete };
+}
+
+/* ---------- scope ---------- */
 
 export type Scope = {
   /** Nothing can match: the session filter names a session the caller does not own, or none at all. */
   empty: boolean;
   /**
    * Every capture the session, date and colour filters can leave, when that
-   * is known to be at most CANDIDATE_CAP; else null. A superset: callers
-   * still apply `filterPredicate` and `colorOk` to each.
+   * is known to be at most CANDIDATE_CAP and loading them fitted in the
+   * read budget; else null. A superset: callers still apply
+   * `filterPredicate`, `colorOk` and any time bound to each.
    */
   candidates: CaptureDoc[] | null;
   /** Whether a capture passes the colour filter; always true without one. */
   colorOk: (id: Id<"captures">) => Promise<boolean>;
+  /** The colour filter's matching set; null without a colour filter. */
+  color: ColorSet | null;
   diagnostics: Record<string, number | boolean | null>;
 };
+
+export type ScopeOptions = {
+  /** Which candidate sets to load: "color" only the colour set (browse), "any" also a session/date range (search), "none" neither. */
+  materialize: "none" | "color" | "any";
+  /** Charged for every capture loaded; loading gives up once it is spent. */
+  budget: ReadBudget;
+  /** Bounds a session/date range is loaded within (a search snapshot). */
+  bounds?: TimeBounds;
+  /** The colour set an earlier query of the same search already read. */
+  color?: ColorSet;
+};
+
+/** Load captures one at a time within the budget; null once it is spent. */
+async function loadWithin(
+  ctx: QueryCtx,
+  userId: string,
+  ids: Iterable<string>,
+  budget: ReadBudget
+): Promise<CaptureDoc[] | null> {
+  const out: CaptureDoc[] = [];
+  for (const id of ids) {
+    if (budget.exhausted) return null;
+    const d = await ctx.db.get(id as Id<"captures">);
+    if (!d) continue;
+    budget.charge(d);
+    if (d.userId === userId) out.push(d);
+  }
+  return out;
+}
+
+/** A session/date range of at most CANDIDATE_CAP captures that fits in the budget, else null. */
+async function rangeWithin(
+  ctx: QueryCtx,
+  userId: string,
+  f: Filters,
+  bounds: TimeBounds,
+  budget: ReadBudget
+): Promise<CaptureDoc[] | null> {
+  const out: CaptureDoc[] = [];
+  for await (const d of captureRange(ctx, userId, f, bounds)) {
+    if (out.length === CANDIDATE_CAP || budget.exhausted) return null;
+    budget.charge(d);
+    out.push(d);
+  }
+  return out;
+}
 
 /**
  * Resolve the filters that narrow the library before any ranking.
  *
  * The colour filter is turned into the set of matching capture ids FIRST,
- * from the caller's captureColors rows in the L band a match can lie in
- * (by_user_l). Ranking then happens within that set, so a colour filter
- * never has to post-filter a top-k vector list down to nothing. `materialize`
- * says which candidate sets to load: "color" only the colour set (browse),
- * "any" also a session/date range (search), "none" neither.
+ * from the caller's significant captureColors rows in the L band a match
+ * can lie in (by_user_significant_l). Ranking then happens within that set,
+ * so a colour filter never has to post-filter a top-k vector list down to
+ * nothing.
  */
-export async function resolveScope(
-  ctx: QueryCtx,
-  userId: string,
-  f: Filters,
-  materialize: "none" | "color" | "any"
-): Promise<Scope> {
+export async function resolveScope(ctx: QueryCtx, userId: string, f: Filters, opts: ScopeOptions): Promise<Scope> {
   if (f.sessionId !== undefined) {
     const session = await ctx.db.get(f.sessionId);
     if (!session || session.userId !== userId) {
-      return { empty: true, candidates: [], colorOk: async () => false, diagnostics: {} };
+      return { empty: true, candidates: [], colorOk: async () => false, color: null, diagnostics: {} };
     }
   }
 
   const diagnostics: Scope["diagnostics"] = {};
-  let colorIds: Set<string> | null = null;
+  let color: ColorSet | null = null;
   let colorOk: Scope["colorOk"] = async () => true;
   if (f.color !== undefined) {
     const target = hexToLab(f.color)!;
     const tol = f.colorTolerance;
-    const band = lightnessBand(tol);
-    const rows = await ctx.db
-      .query("captureColors")
-      .withIndex("by_user_l", (q) =>
-        q
-          .eq("userId", userId)
-          .gte("l", target[0] - band)
-          .lte("l", target[0] + band)
-      )
-      .take(MAX_COLOR_ROWS + 1);
-    const complete = rows.length <= MAX_COLOR_ROWS;
-    const ids = new Set<string>(
-      rows
-        .slice(0, MAX_COLOR_ROWS)
-        .filter((r) => colorRowMatches(target, r, tol))
-        .map((r) => r.captureId)
-    );
-    if (complete) colorIds = ids;
-    colorOk = complete
-      ? async (id) => ids.has(id)
-      : async (id) => ids.has(id) || (await captureHasColor(ctx, id, target, tol));
-    diagnostics.colorMatches = ids.size;
-    diagnostics.colorRowsTruncated = !complete;
+    const set = opts.color ?? (await readColorSet(ctx, userId, target, tol));
+    color = set;
+    colorOk = set.complete
+      ? async (id) => set.ids.has(id)
+      : async (id) => set.ids.has(id) || (await captureHasColor(ctx, id, target, tol));
+    diagnostics.colorMatches = set.ids.size;
+    diagnostics.colorRowsTruncated = !set.complete;
   }
 
   let candidates: CaptureDoc[] | null = null;
-  if (materialize !== "none") {
-    if (colorIds && colorIds.size <= CANDIDATE_CAP) {
-      const docs = await Promise.all([...colorIds].map((id) => ctx.db.get(id as Id<"captures">)));
-      candidates = docs.filter((d): d is CaptureDoc => !!d && d.userId === userId);
-    } else if (materialize === "any" && (f.sessionId !== undefined || f.dateFrom !== undefined || f.dateTo !== undefined)) {
-      const docs = await captureRange(ctx, userId, f).take(CANDIDATE_CAP + 1);
-      if (docs.length <= CANDIDATE_CAP) candidates = docs;
+  if (opts.materialize !== "none") {
+    if (color?.complete && color.ids.size <= CANDIDATE_CAP) {
+      candidates = await loadWithin(ctx, userId, color.ids, opts.budget);
+    } else if (
+      opts.materialize === "any" &&
+      (f.sessionId !== undefined || f.dateFrom !== undefined || f.dateTo !== undefined)
+    ) {
+      candidates = await rangeWithin(ctx, userId, f, opts.bounds ?? {}, opts.budget);
     }
   }
   diagnostics.candidates = candidates ? candidates.length : null;
-  return { empty: false, candidates, colorOk, diagnostics };
+  return { empty: false, candidates, colorOk, color, diagnostics };
 }

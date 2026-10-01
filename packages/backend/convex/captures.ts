@@ -3,6 +3,8 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { buildSearchText } from "./lib/search_rank";
+import { normalizeTag, normalizeUserTags } from "./lib/capture_text";
+import { isSignificantColor } from "./lib/search_filters";
 import { recordTagUse } from "./upload";
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot" | "element" | "viewport";
@@ -131,33 +133,22 @@ export const getCaptureById = query({
 
 /* ---------- detail view edits ---------- */
 
-/** Most user tags one capture keeps, and the longest tag kept (characters). */
-export const MAX_USER_TAGS = 20;
-export const MAX_TAG_LENGTH = 40;
+export { MAX_TAG_LENGTH, MAX_USER_TAGS, normalizeTag, normalizeUserTags } from "./lib/capture_text";
+
 /** Entries a client may send at once; a longer list is refused, not cut. */
 const MAX_TAGS_INPUT = 100;
 
 /**
- * User tags as stored: trimmed, lowercased (as saves and upsertTags store
- * them), inner whitespace collapsed, cut to MAX_TAG_LENGTH, de-duplicated,
- * at most MAX_USER_TAGS in the order given.
- */
-export function normalizeUserTags(tags: string[]): string[] {
-  const out: string[] = [];
-  for (const raw of tags) {
-    const tag = raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, MAX_TAG_LENGTH).trim();
-    if (tag && !out.includes(tag)) out.push(tag);
-    if (out.length === MAX_USER_TAGS) break;
-  }
-  return out;
-}
-
-/**
  * Replace a capture's user tags (the detail view's editable list); the AI's
- * labels are separate and stay as they are. searchText is rebuilt in the
- * same write, so keyword search finds the new tags, and stops finding the
- * removed ones, at once. Tags new to the capture count as used in the
- * suggestions list (listTags).
+ * labels are separate and stay as they are. The list is normalised as every
+ * save normalises tags (lib/capture_text normalizeUserTags: at most 20, the
+ * first 20 distinct ones of the list given, so a capture saved with more
+ * keeps its first 20 once edited). searchText is rebuilt in the same write,
+ * so keyword search finds the new tags, and stops finding the removed ones,
+ * at once. Tags new to the capture, compared after the same normalisation
+ * (so re-saving an existing tag in another case or spacing is not new),
+ * count as used in the suggestions list (listTags). Removing a tag does not
+ * uncount it: `useCount` counts adds.
  */
 export const setCaptureTags = mutation({
   args: { captureId: v.id("captures"), tags: v.array(v.string()) },
@@ -169,42 +160,10 @@ export const setCaptureTags = mutation({
     if (!doc || doc.userId !== identity.subject) throw new Error("Not found or forbidden");
 
     const next = normalizeUserTags(tags);
-    const before = new Set(doc.tags ?? []);
+    const before = new Set((doc.tags ?? []).map(normalizeTag));
     await ctx.db.patch(captureId, { tags: next, searchText: buildSearchText({ ...(doc as any), tags: next }) });
     await recordTagUse(ctx, identity.subject, next.filter((t) => !before.has(t)));
     return { tags: next } as const;
-  },
-});
-
-export const patchImageCaptionAndEmbedding = mutation({
-  args: {
-    id: v.id("captures"),
-    caption: v.optional(v.string()),
-    imageEmbedding: v.optional(v.array(v.float64())),
-  },
-  handler: async (ctx, { id, caption, imageEmbedding }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-    const doc = await ctx.db.get(id);
-    if (!doc || (doc as any).userId !== identity.subject) throw new Error("Not found or forbidden");
-    await ctx.db.patch(id, {
-      ...(caption !== undefined ? { caption } : {}),
-      ...(imageEmbedding !== undefined ? { imageEmbedding } : {}),
-    });
-    return { ok: true } as const;
-  },
-});
-
-export const listAllForUser = query({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [] as any[];
-    const all = await ctx.db
-      .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-      .collect();
-    return all as any[];
   },
 });
 
@@ -260,6 +219,39 @@ export const backfillCaptureStatus = internalMutation({
 
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.captures.backfillCaptureStatus, {
+        cursor: page.continueCursor,
+      });
+    }
+    return { patched, done: page.isDone };
+  },
+});
+
+/**
+ * One-off backfill: set `significant` on captureColors rows written before
+ * it existed, so the colour filter reads them through the significant part
+ * of by_user_significant_l. Until it has run, the filter also reads the
+ * rows lacking the field, so results are right either way; this only makes
+ * the filter cheaper.
+ *
+ * 500 rows a batch (~125 KB read, at most 500 writes); each batch schedules
+ * the next until the table is exhausted. Run once from the dashboard or
+ * CLI: `npx convex run captures:backfillColorSignificance`.
+ */
+export const backfillColorSignificance = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }): Promise<{ patched: number; done: boolean }> => {
+    const page = await ctx.db.query("captureColors").paginate({ cursor: cursor ?? null, numItems: 500 });
+
+    let patched = 0;
+    for (const row of page.page) {
+      if (row.significant === undefined) {
+        await ctx.db.patch(row._id, { significant: isSignificantColor(row.weight) });
+        patched++;
+      }
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.captures.backfillColorSignificance, {
         cursor: page.continueCursor,
       });
     }

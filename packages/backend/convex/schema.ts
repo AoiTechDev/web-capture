@@ -127,6 +127,8 @@ const commonCaptureFields = {
    * recomputed on every write to those fields.
    */
   searchText: v.optional(v.string()),
+  /** Set when a text field was cut to its cap (lib/capture_text TEXT_CAPS) on save. */
+  truncated: v.optional(v.boolean()),
 };
 
 /**
@@ -299,16 +301,21 @@ export default defineSchema({
     // and text captures (textEmbedding). A `kind` filter field on one index
     // would not do: Convex vector filters cannot AND two fields, so scoping
     // by userId and kind at once is impossible. Scoping by userId keeps one
-    // user's vectors out of another's results at the index level.
+    // user's vectors out of another's results at the index level. sessionId
+    // lets a session filter search within the session instead of taking the
+    // user's top hits and filtering them (search checks the session is the
+    // caller's first, and re-checks the owner of every hit). Kind and
+    // category cannot be index filters for the same reason, so those are
+    // applied after the index, on a widened candidate list.
     .vectorIndex("by_localEmbedding", {
       vectorField: "localEmbedding",
       dimensions: LOCAL_EMBEDDING_DIM,
-      filterFields: ["userId"],
+      filterFields: ["userId", "sessionId"],
     })
     .vectorIndex("by_textEmbedding", {
       vectorField: "textEmbedding",
       dimensions: LOCAL_EMBEDDING_DIM,
-      filterFields: ["userId"],
+      filterFields: ["userId", "sessionId"],
     })
     // Keyword retrieval for search, so it never scans the whole library.
     .searchIndex("search_text", {
@@ -383,12 +390,19 @@ export default defineSchema({
     b: v.float64(),
     /** 0..1, share of the capture */
     weight: v.float64(),
+    /**
+     * weight > 0.05 (lib/search_filters isSignificantColor): whether the
+     * colour filter can ever match this row. Absent on rows written before
+     * it existed until captures.backfillColorSignificance has run.
+     */
+    significant: v.optional(v.boolean()),
   })
     .index("by_capture", ["captureId"])
     .index("by_user", ["userId"])
-    // The colour filter reads only the L band a match can lie in
-    // (lib/search_filters lightnessBand), not every colour the user has.
-    .index("by_user_l", ["userId", "l"]),
+    // The colour filter reads only significant rows in the L band a match
+    // can lie in (lib/search_filters lightnessRange), not every colour the
+    // user has.
+    .index("by_user_significant_l", ["userId", "significant", "l"]),
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),

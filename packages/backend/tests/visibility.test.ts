@@ -16,13 +16,20 @@ describe("function visibility", () => {
   test.each([
     ["links.patchPreview", links.patchPreview],
     ["links.attachPreviewToCapture", links.attachPreviewToCapture],
-    ["ai.generateImageCaptionAndEmbedding", ai.generateImageCaptionAndEmbedding],
     ["ai.embedQuery", ai.embedQuery],
-    ["search.searchCapturesSemantic", search.searchCapturesSemantic],
     ["captures.backfillCaptureStatus", captures.backfillCaptureStatus],
+    ["captures.backfillColorSignificance", captures.backfillColorSignificance],
     ["search.rankAndHydrate", search.rankAndHydrate],
   ])("%s is internal (not callable via api)", (_name, fn) => {
     expect(isInternal(fn)).toBe(true);
+  });
+
+  test("removed functions are gone, not just hidden", () => {
+    expect((captures as any).patchImageCaptionAndEmbedding).toBeUndefined();
+    expect((captures as any).listAllForUser).toBeUndefined();
+    expect((search as any).searchCapturesFallback).toBeUndefined();
+    expect((search as any).searchCapturesSemantic).toBeUndefined();
+    expect((ai as any).generateImageCaptionAndEmbedding).toBeUndefined();
   });
 
   test("ai.ts exports no public functions", () => {
@@ -32,7 +39,7 @@ describe("function visibility", () => {
 
   test("search.ts: only the auth-scoped search functions are public", () => {
     const pub = Object.entries(search).filter(([, fn]) => isPublic(fn));
-    expect(pub.map(([n]) => n).sort()).toEqual(["searchCaptures", "searchCapturesFallback"]);
+    expect(pub.map(([n]) => n).sort()).toEqual(["searchCaptures"]);
   });
 
   test("links.ts public surface is limited to read/insert/enrich", () => {

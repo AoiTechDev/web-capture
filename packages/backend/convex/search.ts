@@ -1,4 +1,4 @@
-import { action, internalAction, internalQuery, query } from "./_generated/server";
+import { action, internalQuery, type QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
@@ -10,18 +10,16 @@ import {
   clampLimit,
   decodeSearchCursor,
   encodeSearchCursor,
+  isSearchCursor,
   normalizeFilters,
+  type SearchMode,
 } from "./lib/search_filters";
+import { createReadBudget } from "./lib/read_budget";
+import { rankByCosine, rankByKeyword, rrfFuse, tokenize, type FusedHit, type RankedHit } from "./lib/search_rank";
 import {
-  cosineSimilarity,
-  rankByCosine,
-  rankByKeyword,
-  rrfFuse,
-  tokenize,
-  type FusedHit,
-  type RankedHit,
-} from "./lib/search_rank";
-import {
+  colorSetFromArg,
+  colorSetToArg,
+  colorSetValidator,
   filterArgs,
   filterPredicate,
   filtersValidator,
@@ -30,44 +28,8 @@ import {
   sessionNameLoader,
   toRow,
   type CaptureRow,
+  type ColorSetArg,
 } from "./search_scope";
-
-declare const process: any;
-
-/**
- * Substring search over one user's captures, as a plain reactive query.
- * @deprecated Kept for callers built before `searchCaptures`; that action
- * does keyword matching too, fused with the vector lists.
- */
-export const searchCapturesFallback = query({
-  args: { q: v.string(), limit: v.optional(v.number()) },
-  handler: async (ctx, { q, limit }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return { results: [] } as const;
-    const take = Math.max(1, Math.min(100, limit ?? 30));
-
-    const all = await ctx.db
-      .query("captures")
-      .withIndex("by_user", (q2) => q2.eq("userId", identity.subject))
-      .collect();
-
-    const lc = q.toLowerCase();
-    const filtered = all.filter((d: any) => {
-      // Include the body of text/code/link captures, not just their metadata,
-      // otherwise a text capture can never be found by its own content.
-      const hay = [d.title, d.alt, d.category, d.url, d.content, d.text, d.href]
-        .concat(Array.isArray(d.tags) ? d.tags : [])
-        .filter(Boolean)
-        .join(" \n")
-        .toLowerCase();
-      return hay.includes(lc);
-    });
-
-    const names = sessionNameLoader(ctx, identity.subject);
-    const results = await Promise.all(filtered.slice(0, take).map((d) => toRow(ctx, d, names)));
-    return { results } as const;
-  },
-});
 
 /* ---------- hybrid search ---------- */
 
@@ -123,12 +85,25 @@ export type SearchResponse = {
   diagnostics: Record<string, unknown>;
 };
 
+/** What one ranking pass found: a page, nothing (the session is not the caller's), or too many to rank exactly. */
+type Ranked =
+  | { outcome: "ranked"; response: SearchResponse }
+  | { outcome: "empty" }
+  | { outcome: "tooBroad"; snapshot: number; color: ColorSetArg | null };
+
 /** Tuning overrides are cosines. */
 function cosineArg(x: number | undefined, fallback: number, what: string): number {
   if (x === undefined) return fallback;
   if (!Number.isFinite(x)) throw new Error(`${what} must be a finite number`);
   return Math.max(-1, Math.min(1, x));
 }
+
+const emptyResponse = (mode: string): SearchResponse => ({
+  results: [],
+  cursor: null,
+  isDone: true,
+  diagnostics: { mode },
+});
 
 /**
  * Search the caller's captures: image-space vector hits, text-space vector
@@ -144,16 +119,23 @@ function cosineArg(x: number | undefined, fallback: number, what: string): numbe
  * score per source in `sources`.
  *
  * With a blank query and no vectors this browses instead: the filtered
- * library newest first, exactly as `browse.browseCaptures` pages it.
+ * library newest first, exactly as `browse.browseCaptures` pages it (a
+ * search cursor left over from an earlier query then starts from the top).
  *
  * Every filter must hold (AND). Session, date and colour filters narrow the
  * library before ranking: when they leave at most CANDIDATE_CAP captures,
  * those are ranked exhaustively (exact cosine over each one's stored vector,
  * keyword score over each one's fields), so a match deep in the library
- * still surfaces. A vector index can only filter by user, and taking its top
- * 64 then filtering by colour would often leave nothing. Broader filters
- * fall back to the indexes, fetching more vector candidates
- * (filteredVectorCandidates) and filtering them.
+ * still surfaces. Broader filters fall back to the indexes: the vector
+ * indexes filter by session when one is set, else by user; kind and
+ * category cannot be index filters (see the schema), so for those more
+ * vector candidates are fetched (filteredVectorCandidates) and filtered.
+ *
+ * Paging is by offset into the fused list. The cursor also carries the
+ * first page's snapshot (its newest creation time; later pages ignore
+ * captures created after it) and its mode (exact or index; later pages
+ * keep it), so the list does not shift under the offset as captures are
+ * added. Edits and deletions between pages can still move it slightly.
  */
 export const searchCaptures = action({
   args: {
@@ -177,7 +159,11 @@ export const searchCaptures = action({
     const userId = identity.subject;
 
     if (!rawQuery.trim() && !vector && !textArg) {
-      const page: BrowseResponse = await ctx.runQuery(api.browse.browseCaptures, browseArgs);
+      const { cursor: _cursor, ...fresh } = browseArgs;
+      const page: BrowseResponse = await ctx.runQuery(
+        api.browse.browseCaptures,
+        cursor && isSearchCursor(cursor) ? fresh : browseArgs
+      );
       return {
         results: page.results.map((r) => ({ ...r, fusedScore: null, score: null, sources: {} })),
         cursor: page.cursor,
@@ -186,7 +172,7 @@ export const searchCaptures = action({
       };
     }
 
-    const offset = cursor ? decodeSearchCursor(cursor) : 0;
+    const position = cursor ? decodeSearchCursor(cursor) : null;
     const minImage = cosineArg(minImageScore, SEARCH_TUNING.imageMinScore, "minImageScore");
     const minText = cosineArg(minTextScore, SEARCH_TUNING.textMinScore, "minTextScore");
     const kinds = filters.kinds;
@@ -198,54 +184,65 @@ export const searchCaptures = action({
       query: rawQuery.slice(0, MAX_QUERY_CHARS),
       filters,
       limit,
-      offset,
+      offset: position?.offset ?? 0,
       minImageScore: minImage,
       minTextScore: minText,
     };
     const tuning = { minImageScore: minImage, minTextScore: minText };
 
-    if (hasNarrowFilter(filters)) {
-      const exact: SearchResponse & { tooBroad?: boolean } = await ctx.runQuery(internal.search.rankAndHydrate, {
+    // Later pages keep the first page's mode, so the offset indexes the same list.
+    let snapshot = position?.snapshot;
+    let color: ColorSetArg | null = null;
+    const exactFirst = position ? position.mode === "exact" : hasNarrowFilter(filters);
+    if (exactFirst) {
+      const exact: Ranked = await ctx.runQuery(internal.search.rankAndHydrate, {
         ...base,
+        ...(snapshot !== undefined ? { snapshot } : {}),
         exact: { ...(imageVector ? { vector: imageVector } : {}), ...(textVector ? { textVector } : {}) },
       });
-      if (!exact.tooBroad) {
-        const { tooBroad: _tooBroad, ...response } = exact;
-        return { ...response, diagnostics: { ...response.diagnostics, mode: "exact", ...tuning } };
+      if (exact.outcome === "empty") return emptyResponse("exact");
+      if (exact.outcome === "ranked") {
+        const r = exact.response;
+        return { ...r, diagnostics: { ...r.diagnostics, mode: "exact", ...tuning } };
       }
+      snapshot = exact.snapshot;
+      color = exact.color;
     }
 
+    // The session filter is applied by the vector indexes themselves; the
+    // ranking pass below checks the session is the caller's before using
+    // any hit, and re-checks every hit's owner.
+    const sessionId = filters.sessionId;
+    const scoped = (q: any) => (sessionId !== undefined ? q.eq("sessionId", sessionId) : q.eq("userId", userId));
     const filtered = hasNarrowFilter(filters) || !!kinds || !!filters.aiCategories;
     const limitPerIndex = filtered ? SEARCH_TUNING.filteredVectorCandidates : SEARCH_TUNING.vectorCandidates;
     const [imageRaw, textRaw] = await Promise.all([
       imageVector
-        ? ctx.vectorSearch("captures", "by_localEmbedding", {
-            vector: imageVector,
-            limit: limitPerIndex,
-            filter: (q) => q.eq("userId", userId),
-          })
+        ? ctx.vectorSearch("captures", "by_localEmbedding", { vector: imageVector, limit: limitPerIndex, filter: scoped })
         : Promise.resolve([]),
       textVector
-        ? ctx.vectorSearch("captures", "by_textEmbedding", {
-            vector: textVector,
-            limit: limitPerIndex,
-            filter: (q) => q.eq("userId", userId),
-          })
+        ? ctx.vectorSearch("captures", "by_textEmbedding", { vector: textVector, limit: limitPerIndex, filter: scoped })
         : Promise.resolve([]),
     ]);
     const hits = (raw: Array<{ _id: Id<"captures">; _score: number }>) =>
       raw.map((h) => ({ id: h._id, score: h._score }));
 
-    const ranked: SearchResponse = await ctx.runQuery(internal.search.rankAndHydrate, {
+    const ranked: Ranked = await ctx.runQuery(internal.search.rankAndHydrate, {
       ...base,
+      ...(snapshot !== undefined ? { snapshot } : {}),
+      ...(color ? { color } : {}),
       imageHits: hits(imageRaw),
       textHits: hits(textRaw),
     });
+    // Nothing about the hits is reported for a session that is not the caller's.
+    if (ranked.outcome !== "ranked") return emptyResponse("index");
+    const r = ranked.response;
     return {
-      ...ranked,
+      ...r,
       diagnostics: {
-        ...ranked.diagnostics,
+        ...r.diagnostics,
         mode: "index",
+        ...(position?.mode === "exact" ? { modeChanged: true } : {}),
         imageCandidates: imageRaw.length,
         textCandidates: textRaw.length,
         ...tuning,
@@ -256,16 +253,39 @@ export const searchCaptures = action({
   },
 });
 
+/** Creation time of the user's newest capture (0 for none): the snapshot bound of a search's later pages. */
+async function newestCreationTime(ctx: QueryCtx, userId: string): Promise<number> {
+  const newest = await ctx.db
+    .query("captures")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+  return newest?._creationTime ?? 0;
+}
+
+/** Hits of both spaces alternately, best first in each, so a spent read budget cuts both lists at the same depth. */
+function interleave(image: RankedHit[], text: RankedHit[]): Array<["image" | "text", RankedHit]> {
+  const out: Array<["image" | "text", RankedHit]> = [];
+  for (let i = 0; i < Math.max(image.length, text.length); i++) {
+    if (i < image.length) out.push(["image", image[i]!]);
+    if (i < text.length) out.push(["text", text[i]!]);
+  }
+  return out;
+}
+
 /**
  * Filtering, keyword retrieval, fusion, paging and hydration for
  * `searchCaptures`. Internal: it trusts `userId` and the already-validated
  * filters, which only the action may supply.
  *
  * Two modes. `exact`: rank every capture the narrow filters leave, given
- * the query vectors; returns `tooBroad` when that is more than CANDIDATE_CAP
- * captures (or no narrow filter applies). Otherwise: the vector-index hits
- * the action found, plus keyword candidates from the full-text index, each
- * re-checked against every filter.
+ * the query vectors; `tooBroad` when that is more than CANDIDATE_CAP
+ * captures or more than the read budget (or no narrow filter applies),
+ * with the snapshot and colour set it read so the index pass need not read
+ * them again. Otherwise: the vector-index hits the action found, plus
+ * keyword candidates from the full-text index, each re-checked against
+ * every filter. Both stop reading captures at the read budget
+ * (lib/read_budget); index mode then drops its lowest-ranked hits.
  */
 export const rankAndHydrate = internalQuery({
   args: {
@@ -276,6 +296,10 @@ export const rankAndHydrate = internalQuery({
     offset: v.number(),
     minImageScore: v.number(),
     minTextScore: v.number(),
+    /** Newest creation time a result may have; the first page's, from its cursor. */
+    snapshot: v.optional(v.number()),
+    /** The colour set an exact attempt of the same page already read. */
+    color: v.optional(colorSetValidator),
     /** Vector-index hits, best first. */
     imageHits: v.optional(v.array(hitValidator)),
     textHits: v.optional(v.array(hitValidator)),
@@ -283,17 +307,26 @@ export const rankAndHydrate = internalQuery({
       v.object({ vector: v.optional(v.array(v.float64())), textVector: v.optional(v.array(v.float64())) })
     ),
   },
-  handler: async (ctx, a): Promise<SearchResponse & { tooBroad?: boolean }> => {
+  handler: async (ctx, a): Promise<Ranked> => {
     const { userId, filters, exact } = a;
-    const scope = await resolveScope(ctx, userId, filters, exact ? "any" : "none");
-    const nothing = { results: [], cursor: null, isDone: true, diagnostics: { ...scope.diagnostics } };
-    if (scope.empty) return nothing;
-    if (exact && !scope.candidates) return { ...nothing, tooBroad: true };
+    const budget = createReadBudget();
+    const snapshot = a.snapshot ?? (await newestCreationTime(ctx, userId));
+    const scope = await resolveScope(ctx, userId, filters, {
+      materialize: exact ? "any" : "none",
+      budget,
+      bounds: { atOrBefore: snapshot },
+      ...(a.color ? { color: colorSetFromArg(a.color) } : {}),
+    });
+    if (scope.empty) return { outcome: "empty" };
+    if (exact && !scope.candidates) {
+      return { outcome: "tooBroad", snapshot, color: scope.color ? colorSetToArg(scope.color) : null };
+    }
 
     const passes = filterPredicate(userId, filters);
-    const accept = async (d: any) => passes(d) && (await scope.colorOk(d._id));
+    const accept = async (d: any) => passes(d) && d._creationTime <= snapshot && (await scope.colorOk(d._id));
     const docs = new Map<string, any>();
     const terms = tokenize(a.query);
+    const diagnostics: Record<string, unknown> = { ...scope.diagnostics, terms };
     let keywordHits: RankedHit[];
     let imageLoaded: RankedHit[];
     let textLoaded: RankedHit[];
@@ -314,35 +347,45 @@ export const rankAndHydrate = internalQuery({
     } else {
       // Bounded: the full-text index finds candidates (any term), then each
       // is re-scored so every term must match as a word or word prefix.
-      const found = terms.length
-        ? await ctx.db
-            .query("captures")
-            .withSearchIndex("search_text", (x) =>
-              x.search("searchText", terms.slice(0, MAX_QUERY_TERMS).join(" ")).eq("userId", userId)
-            )
-            .take(MAX_KEYWORD_CANDIDATES)
-        : [];
       const pool: any[] = [];
-      for (const d of found) {
-        docs.set(d._id, d);
-        if (await accept(d)) pool.push(d);
+      if (terms.length) {
+        const found = ctx.db
+          .query("captures")
+          .withSearchIndex("search_text", (x) =>
+            x.search("searchText", terms.slice(0, MAX_QUERY_TERMS).join(" ")).eq("userId", userId)
+          );
+        let read = 0;
+        for await (const d of found) {
+          budget.charge(d);
+          docs.set(d._id, d);
+          if (await accept(d)) pool.push(d);
+          if (++read === MAX_KEYWORD_CANDIDATES || budget.exhausted) break;
+        }
       }
       keywordHits = rankByKeyword(pool, terms);
 
-      // Vector hits are re-checked here: the indexes filter by user only, so
-      // every other filter (and a defensive owner check) applies now.
-      const load = async (hits: Array<{ id: Id<"captures">; score: number }>, floor: number) => {
-        const out: RankedHit[] = [];
-        for (const h of hits) {
-          if (h.score < floor) continue;
-          const d = docs.get(h.id) ?? (await ctx.db.get(h.id));
-          if (d) docs.set(h.id, d);
-          if (await accept(d)) out.push({ id: h.id, score: h.score });
+      // Vector hits are re-checked here: the indexes filter by user or
+      // session only, so every other filter (and the owner) applies now.
+      const loaded = { image: [] as RankedHit[], text: [] as RankedHit[] };
+      const image = (a.imageHits ?? []).filter((h) => h.score >= a.minImageScore);
+      const text = (a.textHits ?? []).filter((h) => h.score >= a.minTextScore);
+      let unread = 0;
+      for (const [space, h] of interleave(image, text)) {
+        let d = docs.get(h.id);
+        if (d === undefined) {
+          if (budget.exhausted) {
+            unread++;
+            continue;
+          }
+          d = await ctx.db.get(h.id as Id<"captures">);
+          budget.charge(d);
+          docs.set(h.id, d);
         }
-        return out;
-      };
-      imageLoaded = await load(a.imageHits ?? [], a.minImageScore);
-      textLoaded = await load(a.textHits ?? [], a.minTextScore);
+        if (d && (await accept(d))) loaded[space].push({ id: h.id, score: h.score });
+      }
+      imageLoaded = loaded.image;
+      textLoaded = loaded.text;
+      if (unread) diagnostics.hitsUnreadForBudget = unread;
     }
 
     const keywordIds = new Set(keywordHits.map((h) => h.id));
@@ -365,85 +408,24 @@ export const rankAndHydrate = internalQuery({
         sources: f.sources,
       }))
     );
+    const mode: SearchMode = exact ? "exact" : "index";
 
     return {
-      results,
-      cursor: end < fused.length ? encodeSearchCursor(end) : null,
-      isDone: end >= fused.length,
-      diagnostics: {
-        ...scope.diagnostics,
-        terms,
-        imageHits: image.length,
-        textHits: text.length,
-        vectorOnlyDropped: imageLoaded.length - image.length + textLoaded.length - text.length,
-        keywordHits: keywordHits.length,
-        fused: fused.length,
-        rrfK: SEARCH_TUNING.rrfK,
+      outcome: "ranked",
+      response: {
+        results,
+        cursor: end < fused.length ? encodeSearchCursor({ offset: end, snapshot, mode }) : null,
+        isDone: end >= fused.length,
+        diagnostics: {
+          ...diagnostics,
+          imageHits: image.length,
+          textHits: text.length,
+          vectorOnlyDropped: imageLoaded.length - image.length + textLoaded.length - text.length,
+          keywordHits: keywordHits.length,
+          fused: fused.length,
+          rrfK: SEARCH_TUNING.rrfK,
+        },
       },
     };
   },
 });
-
-/**
- * OpenAI-backed semantic search. Internal: no client calls it, and a public
- * action would let any signed-in user spend the project's OpenAI quota.
- */
-export const searchCapturesSemantic = internalAction({
-  args: { q: v.string(), limit: v.optional(v.number()), minScore: v.optional(v.number()) },
-  handler: async (ctx, { q, limit, minScore: argMinScore }): Promise<{ results: any[] }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-    const take = Math.max(1, Math.min(100, limit ?? 30));
-    const minScore = Math.max(-1, Math.min(1, argMinScore ?? 0.25));
-
-    const apiKey = process.env?.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("Missing OPENAI_API_KEY environment variable");
-
-    // 1) Embed the query
-    const embedResp = await (globalThis as any).fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: q }),
-    });
-    if (!embedResp.ok) {
-      const text = await embedResp.text();
-      throw new Error(`OpenAI embeddings failed: ${embedResp.status} ${text}`);
-    }
-    const embedData: any = await embedResp.json();
-    const qVec: number[] = (embedData?.data?.[0]?.embedding ?? []).map((x: any) => Number(x));
-
-    const all: any[] = await ctx.runQuery(api.captures.listAllForUser, {});
-
-    const scored: Array<{ doc: any; score: number }> = all
-      .filter((d: any) => (d.kind === "image" || d.kind === "screenshot") && Array.isArray(d.imageEmbedding) && d.imageEmbedding.length)
-      .map((d: any) => ({
-        doc: d,
-        score: cosineSimilarity(d.imageEmbedding as number[], qVec),
-      }))
-      .filter((x: { doc: any; score: number }) => Number.isFinite(x.score) && x.score >= minScore)
-      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
-      .slice(0, take);
-
-    const results: any[] = await Promise.all(
-      scored.map(async ({ doc }: { doc: any }) => ({
-        id: doc._id,
-        imageUrl: await ctx.storage.getUrl(doc.storageId),
-        pageUrl: doc.url,
-        title: doc.title ?? doc.alt ?? null,
-        alt: doc.alt ?? null,
-        tags: doc.tags ?? [],
-        category: doc.category ?? null,
-        width: doc.width,
-        height: doc.height,
-        storageId: doc.storageId,
-      }))
-    );
-
-    return { results } as const;
-  },
-});
-
-

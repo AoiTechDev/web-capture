@@ -2,6 +2,7 @@
  * Pure ranking helpers for capture search: keyword scoring and Reciprocal Rank
  * Fusion. No Convex imports, so they are unit-testable on their own.
  */
+import { truncateUtf8 } from "./capture_text";
 
 export type RankedHit = { id: string; score: number };
 
@@ -69,8 +70,8 @@ export type KeywordDoc = {
 
 /** Body text is capped: the start of a long selection says what it is about. */
 const MAX_CONTENT_CHARS = 2000;
-/** Stored searchText cap, well inside Convex's search field limits. */
-const MAX_SEARCH_TEXT_CHARS = 8000;
+/** Stored searchText cap in UTF-8 bytes, well inside Convex's search field limits. */
+const MAX_SEARCH_TEXT_BYTES = 8 * 1024;
 
 function fieldText(doc: KeywordDoc, field: KeywordField): string {
   switch (field) {
@@ -97,8 +98,8 @@ const FIELDS = Object.keys(KEYWORD_FIELD_WEIGHTS) as KeywordField[];
  */
 export function buildSearchText(doc: KeywordDoc): string {
   const words = tokenize(FIELDS.map((f) => fieldText(doc, f)).join(" ")).join(" ");
-  if (words.length <= MAX_SEARCH_TEXT_CHARS) return words;
-  const cut = words.slice(0, MAX_SEARCH_TEXT_CHARS);
+  const cut = truncateUtf8(words, MAX_SEARCH_TEXT_BYTES);
+  if (cut === words) return words;
   return cut.slice(0, Math.max(0, cut.lastIndexOf(" ")));
 }
 
