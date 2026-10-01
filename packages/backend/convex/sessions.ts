@@ -13,6 +13,7 @@
  */
 
 import { mutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -360,6 +361,59 @@ export const listSessions = query({
     );
 
     return { sessions } as const;
+  },
+});
+
+/** A session as a picker lists it: no capture reads. */
+function toSessionOption(s: Doc<"sessions">) {
+  return {
+    id: s._id,
+    displayName: s.name ?? s.autoName ?? "Untitled session",
+    startedAt: s.startedAt,
+    running: !s.endedAt,
+  };
+}
+
+export type SessionOption = ReturnType<typeof toSessionOption>;
+
+/** Sessions one page of listSessionOptions may return. */
+const MAX_OPTIONS_PAGE = 100;
+
+/**
+ * The caller's sessions newest first, a page at a time (usePaginatedQuery),
+ * for the session pickers. Unlike listSessions it reaches every session,
+ * and reads no captures.
+ */
+export const listSessionOptions = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return { page: [] as SessionOption[], isDone: true, continueCursor: "" };
+    const numItems = Math.max(1, Math.min(MAX_OPTIONS_PAGE, Math.floor(paginationOpts.numItems) || 1));
+    const result = await ctx.db
+      .query("sessions")
+      .withIndex("by_user_startedAt", (q) => q.eq("userId", identity.subject))
+      .order("desc")
+      .paginate({ ...paginationOpts, numItems });
+    return { ...result, page: result.page.map(toSessionOption) };
+  },
+});
+
+/**
+ * One of the caller's sessions as a picker shows it, or null: for an id that
+ * is not a session id at all (a string from a URL), a missing session, and
+ * another user's alike. One read, whatever the session holds.
+ */
+export const getSessionOption = query({
+  args: { id: v.string() },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const sessionId = ctx.db.normalizeId("sessions", id);
+    if (!sessionId) return null;
+    const session = await ctx.db.get(sessionId);
+    if (!session || session.userId !== identity.subject) return null;
+    return toSessionOption(session);
   },
 });
 

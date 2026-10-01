@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
-import { makeT, seedAB, storeBlob, userA, userB, type T } from "./fixtures";
+import { backfillStats, makeT, seedAB, storeBlob, userA, userB, type T } from "./fixtures";
 
 /** A's link capture pointing at B's preview (legacy / forged data). */
 async function linkToForeignPreview(t: T, foreignPreview: Id<"link_previews">, sessionId?: Id<"sessions">) {
@@ -20,18 +20,16 @@ async function linkToForeignPreview(t: T, foreignPreview: Id<"link_previews">, s
 }
 
 describe("link previews never leak across users", () => {
-  test("captures.byCategoryAndKind(link) drops a foreign preview", async () => {
+  test("browse.browseCaptures drops a foreign preview", async () => {
     const t = makeT();
     const { a, b } = await seedAB(t);
     const forged = await linkToForeignPreview(t, b.previewId);
-    const rows = await t
-      .withIdentity(userA)
-      .query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "link" });
-    const own = rows.find((r: any) => r._id === a.linkId) as any;
-    const bad = rows.find((r: any) => r._id === forged) as any;
-    expect(own.preview._id).toBe(a.previewId);
+    const { results: rows } = await t.withIdentity(userA).query(api.browse.browseCaptures, { kinds: ["link"] });
+    const own = rows.find((r) => r.id === a.linkId)!;
+    const bad = rows.find((r) => r.id === forged);
+    expect(own.preview).toMatchObject({ title: "secret-title-A", description: "secret-desc-A", domain: "example.com" });
     expect(bad).toBeDefined();
-    expect(bad.preview).toBeUndefined();
+    expect(bad!.preview).toBeNull();
     expect(JSON.stringify(rows)).not.toContain("secret-title-B");
   });
 
@@ -178,8 +176,9 @@ describe("element / viewport kinds", () => {
     ).rejects.toThrow();
   });
 
-  test("screenshot tab lists screenshot + element + viewport, oldest first, with urls", async () => {
+  test("the screenshot type lists screenshot + element + viewport, newest first, with urls", async () => {
     const t = makeT();
+    await backfillStats(t);
     const ids: string[] = [];
     for (const kind of ["viewport", "screenshot", "element"] as const) {
       const storageId = await storeBlob(t, kind);
@@ -197,13 +196,13 @@ describe("element / viewport kinds", () => {
       storageId: await storeBlob(t, "b"), url: "u", timestamp: 1, width: 1, height: 1, kind: "element",
     });
 
-    const rows = await t
+    const { results: rows } = await t
       .withIdentity(userA)
-      .query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "screenshot" });
-    expect(rows.map((r: any) => r._id)).toEqual(ids);
-    expect(rows.map((r: any) => r.kind)).toEqual(["viewport", "screenshot", "element"]);
-    for (const r of rows as any[]) {
-      expect(typeof r.url).toBe("string");
+      .query(api.browse.browseCaptures, { kinds: ["screenshot", "element", "viewport"] });
+    expect(rows.map((r) => r.id)).toEqual([...ids].reverse());
+    expect(rows.map((r) => r.kind)).toEqual(["element", "screenshot", "viewport"]);
+    for (const r of rows) {
+      expect(typeof r.imageUrl).toBe("string");
       expect(r.pageUrl).toBe(`https://page/${r.kind}`);
     }
 
@@ -217,9 +216,9 @@ describe("element / viewport kinds", () => {
     await t.withIdentity(userA).mutation(api.upload.saveImageCapture, {
       storageId, url: "u", timestamp: 1, width: 1, height: 1, kind: "element",
     });
-    const el = await t.withIdentity(userA).query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "element" });
-    const vp = await t.withIdentity(userA).query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "viewport" });
-    expect(el).toHaveLength(1);
-    expect(vp).toHaveLength(0);
+    const el = await t.withIdentity(userA).query(api.browse.browseCaptures, { kinds: ["element"] });
+    const vp = await t.withIdentity(userA).query(api.browse.browseCaptures, { kinds: ["viewport"] });
+    expect(el.results).toHaveLength(1);
+    expect(vp.results).toHaveLength(0);
   });
 });

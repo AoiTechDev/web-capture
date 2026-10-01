@@ -6,11 +6,12 @@
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { isVisualKind } from "./local_ai";
 import { aiCategoryValidator } from "./schema";
+import { isVisualKind } from "./lib/capture_stats";
+import { truncateUtf8 } from "./lib/capture_text";
 import { hexToLab, MAX_CAPTURE_COLORS, type Lab } from "./lib/color";
 import { colorRowMatches, lightnessRange, type SearchFilters } from "./lib/search_filters";
-import type { ReadBudget } from "./lib/read_budget";
+import { createReadBudget, PREVIEW_READ_BUDGET, type ReadBudget } from "./lib/read_budget";
 
 /**
  * Most captures a narrow filter may leave for them to be ranked exhaustively
@@ -99,8 +100,100 @@ export function sessionNameLoader(ctx: QueryCtx, userId: string) {
 
 export type SessionNames = ReturnType<typeof sessionNameLoader>;
 
-/** One capture as the dashboard grid, the detail view and the in-page overlay render it. */
-export async function toRow(ctx: QueryCtx, d: any, sessionName: SessionNames) {
+/** UTF-8 byte caps on the text of a link row's preview, so a row stays small whatever the page said. */
+export const PREVIEW_CAPS = { title: 300, description: 500, short: 200, url: 2048, keywords: 10, keyword: 64 } as const;
+
+/**
+ * What a link card and its hover card show of the capture's link_previews
+ * document: the display fields only, capped (PREVIEW_CAPS).
+ */
+export type LinkPreviewSummary = {
+  domain: string | null;
+  siteName: string | null;
+  title: string | null;
+  description: string | null;
+  /** http(s) only; null when longer than PREVIEW_CAPS.url (a cut URL is a broken one). */
+  faviconUrl: string | null;
+  imageUrl: string | null;
+  contentType: string | null;
+  author: string | null;
+  publishedDate: string | null;
+  keywords: string[];
+  /** HTTP status of the last fetch. */
+  status: number | null;
+};
+
+function capText(x: unknown, bytes: number): string | null {
+  if (typeof x !== "string") return null;
+  const t = x.trim();
+  return t ? truncateUtf8(t, bytes) : null;
+}
+
+function capUrl(x: unknown): string | null {
+  if (typeof x !== "string" || x.length > PREVIEW_CAPS.url) return null;
+  return /^https?:\/\//i.test(x) ? x : null;
+}
+
+export function summarizePreview(p: Doc<"link_previews">): LinkPreviewSummary {
+  return {
+    domain: capText(p.domain, PREVIEW_CAPS.short),
+    siteName: capText(p.siteName, PREVIEW_CAPS.short),
+    title: capText(p.title, PREVIEW_CAPS.title),
+    description: capText(p.description, PREVIEW_CAPS.description),
+    faviconUrl: capUrl(p.faviconUrl),
+    imageUrl: capUrl(p.imageUrl),
+    contentType: capText(p.contentType, PREVIEW_CAPS.short),
+    author: capText(p.author, PREVIEW_CAPS.short),
+    publishedDate: capText(p.publishedDate, PREVIEW_CAPS.short),
+    keywords: (p.keywords ?? [])
+      .slice(0, PREVIEW_CAPS.keywords)
+      .map((k) => capText(k, PREVIEW_CAPS.keyword))
+      .filter((k): k is string => k !== null),
+    status: p.status ?? null,
+  };
+}
+
+/**
+ * The previews of the link captures among `docs`, by capture id. Read one at
+ * a time, deduplicated, within PREVIEW_READ_BUDGET (lib/read_budget): once it
+ * is spent, the remaining links go without one. A preview that is missing or
+ * is not the caller's is left out.
+ */
+export async function loadLinkPreviews(
+  ctx: QueryCtx,
+  userId: string,
+  docs: readonly any[]
+): Promise<Map<string, LinkPreviewSummary>> {
+  const budget = createReadBudget(PREVIEW_READ_BUDGET);
+  const byPreview = new Map<string, LinkPreviewSummary | null>();
+  const out = new Map<string, LinkPreviewSummary>();
+  for (const d of docs) {
+    if (d?.kind !== "link" || !d.linkPreviewId) continue;
+    let summary = byPreview.get(d.linkPreviewId);
+    if (summary === undefined) {
+      if (budget.exhausted) continue;
+      const p = await ctx.db.get(d.linkPreviewId as Id<"link_previews">);
+      if (p) budget.charge(p);
+      summary = p && p.userId === userId ? summarizePreview(p) : null;
+      byPreview.set(d.linkPreviewId, summary);
+    }
+    if (summary) out.set(d._id, summary);
+  }
+  return out;
+}
+
+/** Rows for `docs`, in order, with session names and link previews. */
+export async function toRows(ctx: QueryCtx, userId: string, docs: readonly any[]): Promise<CaptureRow[]> {
+  const names = sessionNameLoader(ctx, userId);
+  const previews = await loadLinkPreviews(ctx, userId, docs);
+  return await Promise.all(docs.map((d) => toRow(ctx, d, names, previews.get(d._id) ?? null)));
+}
+
+/**
+ * One capture as the dashboard grid, the detail view and the in-page overlay
+ * render it. `preview` is its link preview (loadLinkPreviews); use toRows.
+ */
+export async function toRow(ctx: QueryCtx, d: any, sessionName: SessionNames, preview: LinkPreviewSummary | null = null) {
   return {
     id: d._id as Id<"captures">,
     kind: d.kind as string,
@@ -121,6 +214,8 @@ export async function toRow(ctx: QueryCtx, d: any, sessionName: SessionNames) {
     href: (d.href ?? null) as string | null,
     text: (d.text ?? null) as string | null,
     linkPreviewId: d.linkPreviewId ?? null,
+    /** Link captures: the page's title, description, favicon and image, when fetched. */
+    preview,
     domain: (d.domain ?? null) as string | null,
     /** Client-reported capture time. */
     timestamp: (d.timestamp ?? d._creationTime) as number,

@@ -6,90 +6,13 @@ import { buildSearchText } from "./lib/search_rank";
 import { normalizeTag, normalizeUserTags } from "./lib/capture_text";
 import { isSignificantColor } from "./lib/search_filters";
 import { recordTagUse } from "./upload";
-
-type Kind = "image" | "text" | "link" | "code" | "screenshot" | "element" | "viewport";
-type VisualKind = "image" | "screenshot" | "element" | "viewport";
+import { patchCapture, readUserStats } from "./user_stats";
+import { sumCounts } from "./lib/capture_stats";
 
 /**
- * Picked-element and viewport shots are screenshots as far as browsing goes,
- * so the Screenshots tab lists all three.
+ * Legacy folders, for the extension's "choose category" overlay; the
+ * dashboard no longer shows them (see the `categories` table).
  */
-const KINDS_FOR_TAB: Partial<Record<Kind, Kind[]>> = {
-  screenshot: ["screenshot", "element", "viewport"],
-};
-
-export const byCategoryAndKind = query({
-  args: {
-    category: v.string(),
-    kind: v.union(
-      v.literal("image"),
-      v.literal("text"),
-      v.literal("link"),
-      v.literal("code"),
-      v.literal("screenshot"),
-      v.literal("element"),
-      v.literal("viewport")
-    ),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-   
-    if (!identity) throw new Error("Unauthorized");
-    const kinds = KINDS_FOR_TAB[args.kind] ?? [args.kind];
-    const perKind = await Promise.all(
-      kinds.map((kind) =>
-        ctx.db
-          .query("captures")
-          .withIndex("by_user_category_and_kind", (q) =>
-            q
-              .eq("userId", identity.subject)
-              .eq("category", args.category)
-              .eq("kind", kind)
-          )
-          .collect()
-      )
-    );
-    // Same order a single index scan gives: oldest first.
-    const captures = perKind.flat().sort((a, b) => a._creationTime - b._creationTime);
-
-    if (args.kind === "image" || args.kind === "screenshot" || args.kind === "element" || args.kind === "viewport") {
-      const imagesWithStorage = captures.filter(
-        (d): d is Extract<(typeof captures)[number], { kind: VisualKind }> =>
-          (d.kind === "image" || d.kind === "screenshot" || d.kind === "element" || d.kind === "viewport") &&
-          d.storageId !== undefined
-      );
-
-      return Promise.all(
-        imagesWithStorage.map(async (d) => ({
-          ...d,
-          url: await ctx.storage.getUrl(d.storageId!),
-          // Grid-sized WebP; absent on captures saved before thumbnails existed.
-          thumbUrl: d.thumbStorageId ? await ctx.storage.getUrl(d.thumbStorageId) : null,
-          pageUrl: d.url,
-        }))
-      );
-    }
-
-    if (args.kind === "link") {
-      const linksWithPreview = await Promise.all(
-        captures.map(async (d: any) => {
-          if (d.linkPreviewId) {
-            const preview = await ctx.db.get(d.linkPreviewId);
-            // Never hand out a preview that belongs to someone else.
-            if (preview && (preview as any).userId === identity.subject) {
-              return { ...d, preview };
-            }
-          }
-          return d;
-        })
-      );
-      return linksWithPreview;
-    }
-
-    return captures;
-  },
-});
-
 export const listCategories = query({
   args: {},
   handler: async (ctx) => {
@@ -168,28 +91,22 @@ export const setCaptureTags = mutation({
 });
 
 /**
- * Per-kind capture counts for the dashboard tabs.
+ * Per-kind capture counts for the dashboard's type chips, plus `all`.
  *
- * The tabs show a total for every kind, not just the selected one, so this
- * cannot come from the already-filtered `byCategoryAndKind` query.
+ * Read from the caller's counters (user_stats.ts): two small reads, however
+ * large the library. Null until user_stats.backfillUserStats has counted
+ * the captures that predate the counters, rather than partial numbers.
  */
 export const countsByKind = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Record<string, number> | null> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return {} as Record<string, number>;
+    if (!identity) return {};
 
-    const all = await ctx.db
-      .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", identity.subject))
-      .collect();
-
-    const counts: Record<string, number> = {};
-    for (const doc of all as any[]) {
-      const kind = String(doc.kind ?? "unknown");
-      counts[kind] = (counts[kind] ?? 0) + 1;
-    }
-    counts.all = all.length;
+    const { stats, complete } = await readUserStats(ctx, identity.subject);
+    if (!complete) return null;
+    const counts: Record<string, number> = { ...stats.kinds };
+    counts.all = sumCounts(stats.kinds);
     return counts;
   },
 });
@@ -212,7 +129,7 @@ export const backfillCaptureStatus = internalMutation({
     let patched = 0;
     for (const doc of page.page) {
       if (doc.status === undefined) {
-        await ctx.db.patch(doc._id, { status: "skipped" });
+        await patchCapture(ctx, doc, { status: "skipped" });
         patched++;
       }
     }

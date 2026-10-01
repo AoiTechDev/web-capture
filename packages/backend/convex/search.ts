@@ -3,7 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { assertLocalEmbedding } from "./helpers";
-import { isVisualKind } from "./local_ai";
+import { isVisualKind } from "./lib/capture_stats";
 import type { BrowseResponse } from "./browse";
 import { MATCH_DISPLAY_BANDS, matchScore, SEARCH_TUNING } from "./lib/ai_config";
 import {
@@ -25,8 +25,7 @@ import {
   filtersValidator,
   hasNarrowFilter,
   resolveScope,
-  sessionNameLoader,
-  toRow,
+  toRows,
   type CaptureRow,
   type ColorSetArg,
 } from "./search_scope";
@@ -399,15 +398,14 @@ export const rankAndHydrate = internalQuery({
 
     const fused = rrfFuse({ image, text, keyword: keywordHits }, SEARCH_TUNING.rrfK);
     const end = a.offset + a.limit;
-    const names = sessionNameLoader(ctx, userId);
-    const results = await Promise.all(
-      fused.slice(a.offset, end).map(async (f) => ({
-        ...(await toRow(ctx, docs.get(f.id), names)),
-        fusedScore: Number(f.fused.toFixed(6)),
-        score: matchScore(f.sources),
-        sources: f.sources,
-      }))
-    );
+    const shown = fused.slice(a.offset, end);
+    const rows = await toRows(ctx, userId, shown.map((f) => docs.get(f.id)));
+    const results = shown.map((f, i) => ({
+      ...rows[i]!,
+      fusedScore: Number(f.fused.toFixed(6)),
+      score: matchScore(f.sources),
+      sources: f.sources,
+    }));
     const mode: SearchMode = exact ? "exact" : "index";
 
     return {

@@ -4,8 +4,9 @@ import type { Id } from "./_generated/dataModel";
 import { captureValidator, designDnaValidator, paletteColorValidator } from "./schema";
 import { normalizeCaptureColors } from "./lib/color";
 import { buildSearchText } from "./lib/search_rank";
-import { capCaptureText, normalizeUserTags, TEXT_CAPS, truncateUtf8 } from "./lib/capture_text";
+import { capCaptureText, normalizeUserTags } from "./lib/capture_text";
 import { isSignificantColor } from "./lib/search_filters";
+import { deleteCapture, insertCapture } from "./user_stats";
 
 type DesignDna = Infer<typeof designDnaValidator>;
 type PaletteColor = Infer<typeof paletteColorValidator>;
@@ -167,7 +168,6 @@ export const uploadCapture = mutation({
     const c = rest as {
       linkPreviewId?: Id<"link_previews">;
       storageId?: Id<"_storage">;
-      category?: string;
       tags?: string[];
     };
     await assertCaptureRefs(ctx, identity.subject, {
@@ -175,10 +175,11 @@ export const uploadCapture = mutation({
       storageId: c.storageId,
     });
     const tags = c.tags ? { tags: normalizeUserTags(c.tags) } : {};
-    return await ctx.db.insert("captures", {
+    // `category` (a legacy folder, see the schema) is kept only when the
+    // client chose one.
+    return await insertCapture(ctx, {
       ...rest,
       ...tags,
-      category: c.category ?? "unsorted",
       userId: identity.subject,
       status: "pending",
       searchText: buildSearchText({ ...(rest as any), ...tags }),
@@ -245,7 +246,7 @@ export const saveImageCapture = mutation({
       timestamp,
       width,
       height,
-      category: text.category ?? "unsorted",
+      category: text.category,
       tags: normalizeUserTags(tags ?? []),
       title: text.title,
       note: text.note,
@@ -257,7 +258,7 @@ export const saveImageCapture = mutation({
 
     let captureId: Id<"captures">;
     if (kind === "element") {
-      captureId = await ctx.db.insert("captures", {
+      captureId = await insertCapture(ctx, {
         ...common,
         searchText,
         kind: "element",
@@ -266,11 +267,11 @@ export const saveImageCapture = mutation({
         designDna,
       });
     } else if (kind === "viewport") {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "viewport", clipped });
+      captureId = await insertCapture(ctx, { ...common, searchText, kind: "viewport", clipped });
     } else if (kind === "screenshot") {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "screenshot", src: text.src ?? "" });
+      captureId = await insertCapture(ctx, { ...common, searchText, kind: "screenshot", src: text.src ?? "" });
     } else {
-      captureId = await ctx.db.insert("captures", { ...common, searchText, kind: "image", src: text.src ?? "" });
+      captureId = await insertCapture(ctx, { ...common, searchText, kind: "image", src: text.src ?? "" });
     }
 
     // Colours are indexed server-side from what was just validated, so the
@@ -308,7 +309,7 @@ export const deleteById = mutation({
     if (!doc || doc.userId !== identity.subject) {
       throw new Error("Not found or permission denied");
     }
-    await ctx.db.delete(args.docId);
+    await deleteCapture(ctx, doc);
 
     const colorRows = await ctx.db
       .query("captureColors")
@@ -338,6 +339,11 @@ export const deleteById = mutation({
   },
 });
 
+/**
+ * Legacy folders: the extension's "choose category" overlay creates them
+ * (and lists them with captures.listCategories). The dashboard no longer
+ * shows them.
+ */
 export const createCategory = mutation({
   args: {
     name: v.string(),
@@ -404,40 +410,5 @@ export const upsertTags = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
     await recordTagUse(ctx, identity.subject, names);
-  },
-});
-
-export const reassignCaptureCategory = mutation({
-  args: v.object({
-    docId: v.id("captures"),
-    newCategory: v.string(),
-  }),
-  handler: async (ctx, { docId, newCategory }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthorized");
-
-    const capture = await ctx.db.get(docId);
-    if (!capture || (capture as any).userId !== identity.subject) {
-      throw new Error("Not found or permission denied");
-    }
-
-    const name = truncateUtf8(newCategory.trim(), TEXT_CAPS.category).trim();
-    const categoryName = name.length > 0 ? name : "unsorted";
-
-    const existing = await ctx.db
-      .query("categories")
-      .withIndex("by_user_and_name", (q) =>
-        q.eq("userId", identity.subject).eq("name", categoryName)
-      )
-      .unique();
-    if (!existing) {
-      await ctx.db.insert("categories", {
-        name: categoryName,
-        createdAt: Date.now(),
-        userId: identity.subject,
-      });
-    }
-
-    await ctx.db.patch(docId, { category: categoryName });
   },
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
-import { makeT, seedUser, userA, userB, vec, DIM, type T } from "./fixtures";
+import { backfillStats, makeT, seedUser, userA, userB, vec, DIM, type T } from "./fixtures";
 
 type Seed = Awaited<ReturnType<typeof seedUser>>;
 type Kind = "query" | "mutation" | "action";
@@ -9,8 +9,6 @@ type Case = { name: string; kind: Kind; fn: any; args: (a: Seed) => Record<strin
 /** Every public function in the in-scope modules, with args aimed at A's data. */
 const CASES: Case[] = [
   // captures
-  { name: "captures.byCategoryAndKind(link)", kind: "query", fn: api.captures.byCategoryAndKind, args: () => ({ category: "unsorted", kind: "link" }) },
-  { name: "captures.byCategoryAndKind(screenshot)", kind: "query", fn: api.captures.byCategoryAndKind, args: () => ({ category: "unsorted", kind: "screenshot" }) },
   { name: "captures.getCaptureById", kind: "query", fn: api.captures.getCaptureById, args: (a) => ({ id: a.linkId }) },
   { name: "captures.setCaptureTags", kind: "mutation", fn: api.captures.setCaptureTags, args: (a) => ({ captureId: a.linkId, tags: ["pwned"] }) },
   { name: "captures.countsByKind", kind: "query", fn: api.captures.countsByKind, args: () => ({}) },
@@ -25,9 +23,11 @@ const CASES: Case[] = [
   { name: "sessions.getActiveSession", kind: "query", fn: api.sessions.getActiveSession, args: () => ({}) },
   { name: "sessions.listSessions", kind: "query", fn: api.sessions.listSessions, args: () => ({}) },
   { name: "sessions.getSession", kind: "query", fn: api.sessions.getSession, args: (a) => ({ id: a.sessionId }) },
+  { name: "sessions.getSessionOption", kind: "query", fn: api.sessions.getSessionOption, args: (a) => ({ id: a.sessionId }) },
+  { name: "sessions.listSessionOptions", kind: "query", fn: api.sessions.listSessionOptions, args: () => ({ paginationOpts: { numItems: 100, cursor: null } }) },
   // upload
   { name: "upload.deleteById", kind: "mutation", fn: api.upload.deleteById, args: (a) => ({ docId: a.shotId }) },
-  { name: "upload.reassignCaptureCategory", kind: "mutation", fn: api.upload.reassignCaptureCategory, args: (a) => ({ docId: a.linkId, newCategory: "pwned" }) },
+  { name: "upload.createCategory", kind: "mutation", fn: api.upload.createCategory, args: () => ({ name: "a-private-cat" }) },
   { name: "upload.uploadCapture(A session)", kind: "mutation", fn: api.upload.uploadCapture, args: (a) => ({ capture: { kind: "text", content: "x", url: "u", timestamp: 1, sessionId: a.sessionId } }) },
   { name: "upload.uploadCapture(A preview)", kind: "mutation", fn: api.upload.uploadCapture, args: (a) => ({ capture: { kind: "link", href: "h", url: "u", timestamp: 1, linkPreviewId: a.previewId } }) },
   { name: "upload.uploadCapture(A storage)", kind: "mutation", fn: api.upload.uploadCapture, args: (a) => ({ capture: { kind: "screenshot", url: "u", timestamp: 1, storageId: a.storageId } }) },
@@ -65,6 +65,7 @@ async function snapshotA(t: T) {
       sessions: (await ctx.db.query("sessions").collect()).filter(own),
       previews: (await ctx.db.query("link_previews").collect()).filter(own),
       categories: (await ctx.db.query("categories").collect()).filter(own),
+      stats: (await ctx.db.query("userStats").collect()).filter(own),
       files: (await ctx.db.system.query("_storage").collect()).length,
     };
   });
@@ -84,7 +85,7 @@ function isEmpty(r: unknown): boolean {
   if (Array.isArray(r)) return r.length === 0;
   if (typeof r === "object") {
     const o = r as Record<string, unknown>;
-    for (const key of ["results", "sessions", "items"]) {
+    for (const key of ["results", "sessions", "items", "page"]) {
       if (key in o) return Array.isArray(o[key]) && (o[key] as unknown[]).length === 0;
     }
     if ("ok" in o) return o.ok === false;
@@ -105,6 +106,8 @@ async function seedWorld() {
   const b = await seedUser(t, userB.subject, "B");
   // B's own session is ended, so B has no running session of its own.
   await t.run((ctx) => ctx.db.patch(b.sessionId, { endedAt: 5 }));
+  // Counters exist, so B's writes exercise them (A's must not move).
+  await backfillStats(t);
   return { t, a, b };
 }
 
@@ -162,5 +165,11 @@ describe("cross-user matrix: sanity (userA sees own data)", () => {
     expect((await asA.query(api.link_search.searchLinks, { q: "secret" })).results).toHaveLength(1);
     expect((await asA.query(api.local_ai.listNeedingEmbedding, {})).items).toHaveLength(1);
     expect((await asA.query(api.captures.listCategories, {})).map((c) => c.name)).toContain("a-private-cat");
+    expect(await asA.query(api.captures.countsByKind, {})).toEqual({ link: 1, screenshot: 1, all: 2 });
+    expect(await asA.query(api.sessions.getSessionOption, { id: a.sessionId })).toMatchObject({ id: a.sessionId });
+    const options = await asA.query(api.sessions.listSessionOptions, { paginationOpts: { numItems: 10, cursor: null } });
+    expect(options.page.map((s) => s.id)).toEqual([a.sessionId]);
+    const link = (await asA.query(api.browse.browseCaptures, { kinds: ["link"] })).results[0]!;
+    expect(link.preview?.title).toBe("secret-title-A");
   });
 });

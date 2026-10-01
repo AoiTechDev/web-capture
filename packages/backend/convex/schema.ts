@@ -138,6 +138,13 @@ const commonCaptureFields = {
  */
 const textVectorField = { textEmbedding: v.optional(v.array(v.float64())) };
 
+/*
+ * `category` on every kind is the legacy folder (see the `categories`
+ * table): kept because existing documents carry it and the extension's
+ * overlay still sets it, but nothing filters or groups by it any more, and
+ * a capture saved without one no longer defaults to "unsorted".
+ */
+
 export const captureValidator = v.union(
   v.object({
     kind: v.literal("image"),
@@ -286,9 +293,7 @@ export const captureValidator = v.union(
 
 export default defineSchema({
   captures: defineTable(captureValidator)
-    .index("by_category_and_kind", ["category", "kind"])
-    .index("by_user", ["userId"]) 
-    .index("by_user_category_and_kind", ["userId", "category", "kind"])
+    .index("by_user", ["userId"])
     .index("by_user_and_kind", ["userId", "kind"])
     .index("by_user_session", ["userId", "sessionId"])
     // The enrichment queue: a user's pending captures, oldest first.
@@ -403,6 +408,12 @@ export default defineSchema({
     // can lie in (lib/search_filters lightnessRange), not every colour the
     // user has.
     .index("by_user_significant_l", ["userId", "significant", "l"]),
+  /**
+   * Legacy folders. The dashboard no longer shows them; the extension's
+   * "choose category" overlay still lists and creates them, and a capture's
+   * `category` field keeps the name it was saved with (absent when none was
+   * chosen; older captures say "unsorted").
+   */
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),
@@ -410,6 +421,32 @@ export default defineSchema({
   })
     .index("by_user_and_name", ["userId", "name"]) 
     .index("by_user_createdAt", ["userId", "createdAt"]),
+  /**
+   * A user's library counters (lib/capture_stats), kept up to date by every
+   * capture write (user_stats.ts) so counting never reads the library.
+   * `generation` matches userStatsBackfill's; a row from an earlier one
+   * reads as zero.
+   */
+  userStats: defineTable({
+    userId: v.string(),
+    generation: v.number(),
+    kinds: v.record(v.string(), v.number()),
+    statuses: v.record(v.string(), v.number()),
+    embedded: v.record(v.string(), v.number()),
+    withImageEmbedding: v.number(),
+  }).index("by_user", ["userId"]),
+  /** Progress of user_stats.backfillUserStats: a single row. */
+  userStatsBackfill: defineTable({
+    generation: v.number(),
+    /** lib/capture_stats STATS_RULE the counters were counted by; another one (or none, on a row from before it existed) means a recount. */
+    rule: v.optional(v.string()),
+    /** Captures created at or before this time are counted. */
+    countedThrough: v.float64(),
+    /** Every capture is counted; new writes count as they happen. */
+    done: v.boolean(),
+    /** When the walk last ran a batch (or started), to spot one that stalled. */
+    lastBatchAt: v.optional(v.float64()),
+  }),
   tags: defineTable({
     name: v.string(),
     userId: v.string(),

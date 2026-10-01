@@ -24,12 +24,22 @@ describe("upload.uploadCapture", () => {
     );
   });
 
-  test("saves with status 'pending', server userId, default category", async () => {
+  test("saves with status 'pending', server userId, and no default category", async () => {
     const t = makeT();
     const id = await t.withIdentity(userA).mutation(api.upload.uploadCapture, { capture: baseText });
     const doc = await t.run((ctx) => ctx.db.get(id));
-    expect(doc).toMatchObject({ userId: userA.subject, status: "pending", category: "unsorted" });
+    expect(doc).toMatchObject({ userId: userA.subject, status: "pending" });
+    // The legacy folder is no longer defaulted to "unsorted".
+    expect(doc!.category).toBeUndefined();
     expect(doc!.error).toBeUndefined();
+  });
+
+  test("keeps a category the client chose (the extension's overlay)", async () => {
+    const t = makeT();
+    const id = await t
+      .withIdentity(userA)
+      .mutation(api.upload.uploadCapture, { capture: { ...baseText, category: "inspiration" } });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.category).toBe("inspiration");
   });
 
   test("client cannot set userId, status or error", async () => {

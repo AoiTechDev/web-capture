@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
-import { makeT, userA, userB, vec, DIM } from "./fixtures";
+import { backfillStats, makeT, userA, userB, vec, DIM } from "./fixtures";
 
 describe("local_ai re-index of stale (wrong-size) vectors", () => {
   /** A `ready` capture of `userId`'s with a vector of `n` dimensions. */
@@ -50,6 +50,7 @@ describe("local_ai re-index of stale (wrong-size) vectors", () => {
     await readyRow(t, 512, "viewport");
     await readyRow(t, DIM, "viewport");
     await readyRow(t, 512, "text");
+    await backfillStats(t);
     const stats = await t.withIdentity(userA).query(api.local_ai.embeddingStats, {});
     expect(stats).toMatchObject({ total: 3, withLocalEmbedding: 1, searchable: 1 });
     expect(stats.byKind).toEqual({

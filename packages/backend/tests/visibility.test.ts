@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
-import * as ai from "../convex/ai";
 import * as captures from "../convex/captures";
 import * as links from "../convex/links";
 import * as search from "../convex/search";
+import * as upload from "../convex/upload";
+import * as userStats from "../convex/user_stats";
+import { modules } from "./setup";
 
 /**
  * `api` from _generated is a runtime proxy that accepts any name, so
@@ -16,7 +18,7 @@ describe("function visibility", () => {
   test.each([
     ["links.patchPreview", links.patchPreview],
     ["links.attachPreviewToCapture", links.attachPreviewToCapture],
-    ["ai.embedQuery", ai.embedQuery],
+    ["user_stats.backfillUserStats", userStats.backfillUserStats],
     ["captures.backfillCaptureStatus", captures.backfillCaptureStatus],
     ["captures.backfillColorSignificance", captures.backfillColorSignificance],
     ["search.rankAndHydrate", search.rankAndHydrate],
@@ -29,11 +31,17 @@ describe("function visibility", () => {
     expect((captures as any).listAllForUser).toBeUndefined();
     expect((search as any).searchCapturesFallback).toBeUndefined();
     expect((search as any).searchCapturesSemantic).toBeUndefined();
-    expect((ai as any).generateImageCaptionAndEmbedding).toBeUndefined();
+    // Legacy folder browsing, superseded by browse.browseCaptures.
+    expect((captures as any).byCategoryAndKind).toBeUndefined();
+    expect((upload as any).reassignCaptureCategory).toBeUndefined();
   });
 
-  test("ai.ts exports no public functions", () => {
-    const pub = Object.entries(ai).filter(([, fn]) => isPublic(fn));
+  test("ai.ts (the unused OpenAI query embedding) is gone", () => {
+    expect(Object.keys(modules).some((m) => /\/ai\.[jt]s$/.test(m))).toBe(false);
+  });
+
+  test("user_stats.ts exports no public functions", () => {
+    const pub = Object.entries(userStats).filter(([, fn]) => isPublic(fn));
     expect(pub.map(([n]) => n)).toEqual([]);
   });
 

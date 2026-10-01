@@ -16,7 +16,12 @@
  */
 export const LOCAL_MODEL_ID = "onnx-community/siglip2-base-patch16-384-ONNX";
 
-/** Pooled output size of LOCAL_MODEL_ID; both vector indexes use it. */
+/**
+ * Pooled output size of LOCAL_MODEL_ID; both vector indexes use it.
+ * Changing it also changes the library counters' rule (lib/capture_stats
+ * STATS_RULE): they read as incomplete until user_stats.backfillUserStats
+ * (run by the cron in crons.ts) has recounted every capture.
+ */
 export const LOCAL_EMBEDDING_DIM = 768;
 
 /**

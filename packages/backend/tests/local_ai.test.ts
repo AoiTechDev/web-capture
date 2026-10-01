@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "../convex/_generated/api";
 import { AI_STALE_PROCESSING_MS } from "../convex/lib/ai_config";
-import { makeT, seedAB, userA, userB, vec, DIM } from "./fixtures";
+import { backfillStats, makeT, seedAB, userA, userB, vec, DIM } from "./fixtures";
 
 describe("local_ai.embeddingStats", () => {
   test("rejects anonymous callers", async () => {
@@ -34,7 +34,9 @@ describe("local_ai.embeddingStats", () => {
         });
       }
     });
+    await backfillStats(t);
     const a = await t.withIdentity(userA).query(api.local_ai.embeddingStats, {});
+    expect(a.complete).toBe(true);
     expect(a.total).toBe(2);
     expect(a.withLocalEmbedding).toBe(1);
     expect(a.byKind).toEqual({

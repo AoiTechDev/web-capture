@@ -268,19 +268,18 @@ describe("dashboard queries: thumbUrl, DNA, legacy captures, isolation", () => {
     return { t, ...seeded, newA: a, newB: b, thumbA, thumbB };
   }
 
-  test("byCategoryAndKind(screenshot) returns thumbUrl for new and null for old", async () => {
+  test("browseCaptures(screenshot kinds) returns thumbUrl for new and null for old", async () => {
     const { t, a, newA } = await world();
-    const rows = (await t.withIdentity(userA).query(api.captures.byCategoryAndKind, {
-      category: "unsorted",
-      kind: "screenshot",
-    })) as any[];
-    expect(rows.map((r) => r._id).sort()).toEqual([a.shotId, newA.id].sort());
-    const fresh = rows.find((r) => r._id === newA.id)!;
-    const old = rows.find((r) => r._id === a.shotId)!;
+    const { results: rows } = await t
+      .withIdentity(userA)
+      .query(api.browse.browseCaptures, { kinds: ["screenshot", "element", "viewport"] });
+    expect(rows.map((r) => r.id).sort()).toEqual([a.shotId, newA.id].sort());
+    const fresh = rows.find((r) => r.id === newA.id)!;
+    const old = rows.find((r) => r.id === a.shotId)!;
     expect(typeof fresh.thumbUrl).toBe("string");
-    expect(fresh.thumbUrl).not.toBe(fresh.url);
+    expect(fresh.thumbUrl).not.toBe(fresh.imageUrl);
     expect(old.thumbUrl).toBeNull();
-    expect(typeof old.url).toBe("string");
+    expect(typeof old.imageUrl).toBe("string");
   });
 
   test("getSession returns thumbUrl / palette / designDna, null for legacy", async () => {
@@ -318,8 +317,8 @@ describe("dashboard queries: thumbUrl, DNA, legacy captures, isolation", () => {
     const markers = ["B_DNA_SECRET", "#b0b0b0", newB.id, thumbB, bThumbUrl!, ...bRows.map((r) => r._id)];
     const asA = t.withIdentity(userA);
     const outputs = [
-      await asA.query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "screenshot" }),
-      await asA.query(api.captures.byCategoryAndKind, { category: "unsorted", kind: "element" }),
+      await asA.query(api.browse.browseCaptures, { kinds: ["screenshot", "element", "viewport"] }),
+      await asA.query(api.browse.browseCaptures, { kinds: ["element"] }),
       await asA.query(api.browse.browseCaptures, {}),
       await asA.query(api.captures.getCaptureById, { id: newB.id }),
       await asA.query(api.sessions.getSession, { id: b.sessionId }),

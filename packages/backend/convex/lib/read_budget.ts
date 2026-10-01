@@ -12,25 +12,36 @@ import { utf8Length } from "./capture_text";
  *
  * Worst case for one browse or search query:
  *   colour rows (search_scope MAX_COLOR_ROWS + 1)  15,001 x 256 B  =  3.7 MiB
- *   captures, up to CAPTURE_READ_BUDGET                               6.0 MiB
+ *   captures, up to CAPTURE_READ_BUDGET                               5.0 MiB
  *     + the two captures read past it (the one that
  *       crosses it, and browse's one-capture lookahead)
  *       at Convex's 1 MiB document maximum                            2.0 MiB
  *     + the newest capture (search's snapshot bound)                  1.0 MiB
  *   per-capture colour checks, only when the colour rows
  *     were cut off: <= 612 captures x 12 rows x 256 B                 1.8 MiB
+ *   link previews of the results, up to PREVIEW_READ_BUDGET           0.5 MiB
+ *     + the preview that crosses it, at 1 MiB                         1.0 MiB
  *   sessions and storage rows for <= 100 results                    < 0.2 MiB
- *   total                                                          < 14.7 MiB  (limit 16)
- * Documents: 15,001 + 612 + 612 x 12 + ~200 = ~23,200 (limit 32,000).
+ *   total                                                          < 15.2 MiB  (limit 16)
+ * Documents: 15,001 + 612 + 612 x 12 + <= 500 previews + ~200 = ~23,700
+ * (limit 32,000).
  * Index ranges: 2 colour ranges + <= 612 per-capture checks + a few (limit 4,096).
  * (612 = 100 keyword + 2 x 256 vector candidates, search's widest read;
  * browse examines at most 500.)
  *
- * At the lib/capture_text caps a capture is under ~80 KiB, so 6 MiB is at
- * least ~75 of the heaviest captures and usually the full 500: a typical
+ * At the lib/capture_text caps a capture is under ~80 KiB, so 5 MiB is at
+ * least ~62 of the heaviest captures and usually the full 500: a typical
  * capture is a few KiB (6 KiB of it the 768-d vector).
  */
-export const CAPTURE_READ_BUDGET = 6 * 1024 * 1024;
+export const CAPTURE_READ_BUDGET = 5 * 1024 * 1024;
+
+/**
+ * Bytes of link previews one query may read to show its link results
+ * (search_scope loadLinkPreviews). A preview is typically under 1 KiB, so
+ * this covers a page of hundreds of links; past it, the remaining link rows
+ * go without a preview (title and hostname only) rather than fail.
+ */
+export const PREVIEW_READ_BUDGET = 512 * 1024;
 
 /**
  * Upper estimate of a value's stored size: strings as UTF-8 plus a small
@@ -52,7 +63,7 @@ export function estimateBytes(value: unknown): number {
   return n;
 }
 
-/** Bytes of captures read so far in one query, against CAPTURE_READ_BUDGET. */
+/** Bytes read so far in one query, against a limit (CAPTURE_READ_BUDGET by default). */
 export type ReadBudget = {
   /** Count a document just read. */
   charge(doc: unknown): void;

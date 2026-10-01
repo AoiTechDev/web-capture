@@ -13,11 +13,12 @@ import type {
   FilterApi,
   FunctionReference,
 } from "convex/server";
-import type * as ai from "../ai.js";
 import type * as browse from "../browse.js";
 import type * as captures from "../captures.js";
+import type * as crons from "../crons.js";
 import type * as helpers from "../helpers.js";
 import type * as lib_ai_config from "../lib/ai_config.js";
+import type * as lib_capture_stats from "../lib/capture_stats.js";
 import type * as lib_capture_text from "../lib/capture_text.js";
 import type * as lib_color from "../lib/color.js";
 import type * as lib_read_budget from "../lib/read_budget.js";
@@ -30,6 +31,7 @@ import type * as search from "../search.js";
 import type * as search_scope from "../search_scope.js";
 import type * as sessions from "../sessions.js";
 import type * as upload from "../upload.js";
+import type * as user_stats from "../user_stats.js";
 
 /**
  * A utility for referencing Convex functions in your app's API.
@@ -40,11 +42,12 @@ import type * as upload from "../upload.js";
  * ```
  */
 declare const fullApi: ApiFromModules<{
-  ai: typeof ai;
   browse: typeof browse;
   captures: typeof captures;
+  crons: typeof crons;
   helpers: typeof helpers;
   "lib/ai_config": typeof lib_ai_config;
+  "lib/capture_stats": typeof lib_capture_stats;
   "lib/capture_text": typeof lib_capture_text;
   "lib/color": typeof lib_color;
   "lib/read_budget": typeof lib_read_budget;
@@ -57,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   search_scope: typeof search_scope;
   sessions: typeof sessions;
   upload: typeof upload;
+  user_stats: typeof user_stats;
 }>;
 export declare const api: FilterApi<
   typeof fullApi,

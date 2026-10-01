@@ -19,25 +19,10 @@ import { aiCategoryValidator } from "./schema";
 import { AI_MAX_ATTEMPTS, AI_STALE_PROCESSING_MS, LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
 import { buildSearchText } from "./lib/search_rank";
 import { normalizeUserTags, TEXT_CAPS, truncateUtf8 } from "./lib/capture_text";
+import { hasEmbedding, isVisualKind, sumCounts } from "./lib/capture_stats";
+import { patchCapture, readUserStats } from "./user_stats";
 
 /* ---------- helpers ---------- */
-
-/** Capture kinds whose content is a stored image. */
-const VISUAL_KINDS = new Set(["image", "screenshot", "element", "viewport"]);
-
-export function isVisualKind(kind: string): boolean {
-  return VISUAL_KINDS.has(kind);
-}
-
-/**
- * Whether a capture has the embedding its kind is searched by, from the
- * current model. A vector of another size (512-d, from the earlier CLIP
- * model) is in no index and counts as none.
- */
-function hasEmbedding(d: any): boolean {
-  const vec = isVisualKind(d.kind) ? d.localEmbedding : d.textEmbedding;
-  return Array.isArray(vec) && vec.length === LOCAL_EMBEDDING_DIM;
-}
 
 /** Unsets whichever vector fields hold a stale (wrong-size) vector. */
 function staleVectorPatch(d: any): { localEmbedding?: undefined; textEmbedding?: undefined } {
@@ -140,7 +125,7 @@ function newClaimToken(): string {
  */
 async function releaseClaim(ctx: MutationCtx, doc: Doc<"captures">, error: string): Promise<boolean> {
   const retry = (doc.aiAttempts ?? 1) < AI_MAX_ATTEMPTS;
-  await ctx.db.patch(doc._id, {
+  await patchCapture(ctx, doc, {
     status: retry ? "pending" : "failed",
     error: error.slice(0, MAX_ERROR_LENGTH) || "Unknown error",
     aiStartedAt: undefined,
@@ -168,7 +153,7 @@ export const claimCapture = mutation({
     if (doc.status !== "pending") return { claimed: false as const, claim: null, item: null };
 
     const claim = newClaimToken();
-    await ctx.db.patch(id, {
+    await patchCapture(ctx, doc, {
       status: "processing",
       aiAttempts: (doc.aiAttempts ?? 0) + 1,
       aiStartedAt: Date.now(),
@@ -254,7 +239,7 @@ export const completeProcessing = mutation({
       aiStyle: cleanLabels(aiStyle, MAX_STYLES),
       aiTags: cleanLabels(aiTags, MAX_AI_TAGS),
     };
-    await ctx.db.patch(id, {
+    await patchCapture(ctx, doc, {
       ...(visual ? { localEmbedding } : { textEmbedding }),
       ...labels,
       searchText: buildSearchText({ ...(doc as any), ...labels }),
@@ -293,7 +278,7 @@ export const retryProcessing = mutation({
     if (doc.status === "pending" || (doc.status === "processing" && !isStaleClaim(doc))) {
       return { ok: true as const, queued: false };
     }
-    await ctx.db.patch(captureId, {
+    await patchCapture(ctx, doc, {
       status: "pending",
       aiAttempts: 0,
       error: undefined,
@@ -380,7 +365,7 @@ export const requeueUnindexed = mutation({
     const { found, capped, continueCursor } = await findUnindexed(ctx, identity.subject, readyCursor ?? null);
     const batch = found.slice(0, take);
     for (const doc of batch) {
-      await ctx.db.patch(doc._id, {
+      await patchCapture(ctx, doc, {
         ...staleVectorPatch(doc),
         status: "pending",
         aiAttempts: 0,
@@ -406,6 +391,11 @@ export const requeueUnindexed = mutation({
 /**
  * How much of the caller's library is reachable by vector search. Anything
  * without the embedding for its kind is found by keywords only.
+ *
+ * Read from the caller's counters (user_stats.ts), so it costs two small
+ * reads whatever the library's size. `complete` is false until
+ * user_stats.backfillUserStats has counted the captures that predate the
+ * counters; the numbers are partial until then.
  */
 export const embeddingStats = query({
   args: {},
@@ -414,41 +404,22 @@ export const embeddingStats = query({
     // read another user's stats.
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
-    const userId = identity.subject;
 
-    const all = await ctx.db
-      .query("captures")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-
+    const { stats, complete } = await readUserStats(ctx, identity.subject);
     const byKind: Record<string, { total: number; withLocalEmbedding: number }> = {};
-    const byStatus: Record<string, number> = {};
-    let withLocalEmbedding = 0;
-    let withImageEmbedding = 0;
-
-    for (const d of all as any[]) {
-      const kind = String(d.kind ?? "unknown");
-      byKind[kind] ??= { total: 0, withLocalEmbedding: 0 };
-      byKind[kind].total++;
-      const status = String(d.status ?? "none");
-      byStatus[status] = (byStatus[status] ?? 0) + 1;
-
-      if (hasEmbedding(d)) {
-        withLocalEmbedding++;
-        byKind[kind].withLocalEmbedding++;
-      }
-      if (Array.isArray(d.imageEmbedding) && d.imageEmbedding.length > 0) {
-        withImageEmbedding++;
-      }
+    for (const [kind, total] of Object.entries(stats.kinds)) {
+      byKind[kind] = { total, withLocalEmbedding: stats.embedded[kind] ?? 0 };
     }
+    const withLocalEmbedding = sumCounts(stats.embedded);
 
     return {
-      total: all.length,
+      total: sumCounts(stats.kinds),
       withLocalEmbedding,
-      withImageEmbedding,
+      withImageEmbedding: stats.withImageEmbedding,
       searchable: withLocalEmbedding,
       byKind,
-      byStatus,
+      byStatus: { ...stats.statuses },
+      complete,
     } as const;
   },
 });

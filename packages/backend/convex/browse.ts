@@ -18,8 +18,7 @@ import {
   filterArgs,
   filterPredicate,
   resolveScope,
-  sessionNameLoader,
-  toRow,
+  toRows,
   type CaptureRow,
   type Filters,
 } from "./search_scope";
@@ -137,8 +136,7 @@ export async function browsePage(
     if (passes(d) && (await scope.colorOk(d._id))) page.push(d);
   }
 
-  const names = sessionNameLoader(ctx, userId);
-  const results = await Promise.all(page.map((d) => toRow(ctx, d, names)));
+  const results = await toRows(ctx, userId, page);
   const lastCursor = last ? encodeBrowseCursor({ t: last._creationTime, id: last._id }) : null;
   if (end) {
     return {

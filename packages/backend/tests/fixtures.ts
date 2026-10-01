@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 import type { Id } from "../convex/_generated/dataModel";
+import { internal } from "../convex/_generated/api";
+import { addStats, captureContribution, emptyStats } from "../convex/lib/capture_stats";
 import { LOCAL_EMBEDDING_DIM } from "../convex/lib/ai_config";
 import { buildSearchText } from "../convex/lib/search_rank";
 import { makeT, userA, userB } from "./setup";
@@ -75,6 +77,36 @@ export async function seedAB(t: T) {
   const a = await seedUser(t, userA.subject, "A");
   const b = await seedUser(t, userB.subject, "B");
   return { a, b };
+}
+
+/**
+ * Count the captures stored so far into the per-user counters
+ * (user_stats.backfillUserStats), as a deployment does once. Small
+ * fixtures fit in one batch; larger ones need fake timers and
+ * finishAllScheduledFunctions.
+ */
+export async function backfillStats(t: T) {
+  const r = await t.mutation(internal.user_stats.backfillUserStats, {});
+  if (!r.done) throw new Error("backfillStats: more than one batch");
+}
+
+/** The user's counters recomputed from every capture they own: what the kept counters must equal. */
+export async function recountStats(t: T, userId: string) {
+  const docs = await t.run((ctx) => ctx.db.query("captures").collect());
+  return docs.filter((d) => d.userId === userId).reduce((s, d) => addStats(s, captureContribution(d)), emptyStats());
+}
+
+/** The user's kept counters as stored (empty when there is no row). */
+export async function storedStats(t: T, userId: string) {
+  const row = await t.run((ctx) =>
+    ctx.db
+      .query("userStats")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique()
+  );
+  if (!row) return emptyStats();
+  const { kinds, statuses, embedded, withImageEmbedding } = row;
+  return { kinds, statuses, embedded, withImageEmbedding };
 }
 
 export { makeT, userA, userB };
