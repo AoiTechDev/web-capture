@@ -214,6 +214,53 @@ export const mergeCaptureTags = mutation({
   },
 });
 
+/**
+ * Move a capture to another of the caller's sessions, or out of any
+ * (`sessionId: null`), from the detail view. Unlike assignCapture this is a
+ * deliberate choice, so it works on captures already filed and on ended
+ * sessions. Both sessions' item counts follow; the new one also takes in the
+ * capture's domain and tags. The old one keeps its aggregates (they are
+ * top-N lists, not exact).
+ */
+export const setCaptureSession = mutation({
+  args: { captureId: v.id("captures"), sessionId: v.union(v.id("sessions"), v.null()) },
+  handler: async (ctx, { captureId, sessionId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    const userId = identity.subject;
+
+    const capture = await ctx.db.get(captureId);
+    if (!capture || capture.userId !== userId) throw new Error("Not found or forbidden");
+    const target = sessionId ? await ctx.db.get(sessionId) : null;
+    // Same error for a missing and a foreign session: existence is not revealed.
+    if (sessionId && (!target || target.userId !== userId)) throw new Error("Not found or forbidden");
+
+    const current = capture.sessionId ?? null;
+    if (current === sessionId) return { sessionId, moved: false } as const;
+
+    if (current) {
+      const old = await ctx.db.get(current);
+      if (old && old.userId === userId) {
+        await ctx.db.patch(old._id, { itemCount: Math.max(0, (old.itemCount ?? 0) - 1) });
+      }
+    }
+    if (target) {
+      const c = capture as { domain?: string; tags?: string[]; aiTags?: string[] };
+      const domains = topBy([...(target.domains ?? []), ...(c.domain ? [c.domain] : [])], MAX_AGGREGATE);
+      const tags = topBy([...(target.tags ?? []), ...(c.tags ?? []), ...(c.aiTags ?? [])], MAX_AGGREGATE);
+      await ctx.db.patch(target._id, {
+        itemCount: (target.itemCount ?? 0) + 1,
+        lastCaptureAt: Math.max(target.lastCaptureAt, capture._creationTime),
+        domains,
+        tags,
+        autoName: target.name ? target.autoName : buildAutoName(domains, tags),
+      });
+    }
+    await ctx.db.patch(captureId, { sessionId: sessionId ?? undefined });
+    return { sessionId, moved: true } as const;
+  },
+});
+
 export const renameSession = mutation({
   args: { id: v.id("sessions"), name: v.string() },
   handler: async (ctx, { id, name }) => {

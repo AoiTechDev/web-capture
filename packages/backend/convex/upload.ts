@@ -340,6 +340,35 @@ export const createCategory = mutation({
   },
 });
 
+/** Count one more use of each tag in the user's tag list (suggestions), adding new ones. */
+export async function recordTagUse(ctx: MutationCtx, userId: string, names: string[]) {
+  const normalized = Array.from(
+    new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))
+  );
+  const now = Date.now();
+  for (const name of normalized) {
+    const existing = await ctx.db
+      .query("tags")
+      .withIndex("by_user_and_name", (q) =>
+        q.eq("userId", userId).eq("name", name)
+      )
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        useCount: (existing as any).useCount + 1,
+        lastUsedAt: now,
+      });
+    } else {
+      await ctx.db.insert("tags", {
+        name,
+        userId,
+        lastUsedAt: now,
+        useCount: 1,
+      });
+    }
+  }
+}
+
 export const upsertTags = mutation({
   args: v.object({
     names: v.array(v.string()),
@@ -347,32 +376,7 @@ export const upsertTags = mutation({
   handler: async (ctx, { names }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
-
-    const normalized = Array.from(
-      new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))
-    );
-    const now = Date.now();
-    for (const name of normalized) {
-      const existing = await ctx.db
-        .query("tags")
-        .withIndex("by_user_and_name", (q) =>
-          q.eq("userId", identity.subject).eq("name", name)
-        )
-        .unique();
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          useCount: (existing as any).useCount + 1,
-          lastUsedAt: now,
-        });
-      } else {
-        await ctx.db.insert("tags", {
-          name,
-          userId: identity.subject,
-          lastUsedAt: now,
-          useCount: 1,
-        });
-      }
-    }
+    await recordTagUse(ctx, identity.subject, names);
   },
 });
 

@@ -86,6 +86,9 @@ describe("thresholds are self-consistent", () => {
     expect(Number.isInteger(SEARCH_TUNING.vectorCandidates)).toBe(true);
     expect(SEARCH_TUNING.vectorCandidates).toBeGreaterThanOrEqual(1);
     expect(SEARCH_TUNING.vectorCandidates).toBeLessThanOrEqual(256);
+    expect(Number.isInteger(SEARCH_TUNING.filteredVectorCandidates)).toBe(true);
+    expect(SEARCH_TUNING.filteredVectorCandidates).toBeGreaterThanOrEqual(SEARCH_TUNING.vectorCandidates);
+    expect(SEARCH_TUNING.filteredVectorCandidates).toBeLessThanOrEqual(256);
     expect(SEARCH_TUNING.rrfK).toBeGreaterThan(0);
   });
 

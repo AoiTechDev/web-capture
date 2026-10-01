@@ -2,6 +2,8 @@ import { internalMutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { buildSearchText } from "./lib/search_rank";
+import { recordTagUse } from "./upload";
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot" | "element" | "viewport";
 type VisualKind = "image" | "screenshot" | "element" | "viewport";
@@ -126,6 +128,53 @@ export const getCaptureById = query({
   },
 });
 
+
+/* ---------- detail view edits ---------- */
+
+/** Most user tags one capture keeps, and the longest tag kept (characters). */
+export const MAX_USER_TAGS = 20;
+export const MAX_TAG_LENGTH = 40;
+/** Entries a client may send at once; a longer list is refused, not cut. */
+const MAX_TAGS_INPUT = 100;
+
+/**
+ * User tags as stored: trimmed, lowercased (as saves and upsertTags store
+ * them), inner whitespace collapsed, cut to MAX_TAG_LENGTH, de-duplicated,
+ * at most MAX_USER_TAGS in the order given.
+ */
+export function normalizeUserTags(tags: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, MAX_TAG_LENGTH).trim();
+    if (tag && !out.includes(tag)) out.push(tag);
+    if (out.length === MAX_USER_TAGS) break;
+  }
+  return out;
+}
+
+/**
+ * Replace a capture's user tags (the detail view's editable list); the AI's
+ * labels are separate and stay as they are. searchText is rebuilt in the
+ * same write, so keyword search finds the new tags, and stops finding the
+ * removed ones, at once. Tags new to the capture count as used in the
+ * suggestions list (listTags).
+ */
+export const setCaptureTags = mutation({
+  args: { captureId: v.id("captures"), tags: v.array(v.string()) },
+  handler: async (ctx, { captureId, tags }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthorized");
+    if (tags.length > MAX_TAGS_INPUT) throw new Error(`tags has more than ${MAX_TAGS_INPUT} entries`);
+    const doc = await ctx.db.get(captureId);
+    if (!doc || doc.userId !== identity.subject) throw new Error("Not found or forbidden");
+
+    const next = normalizeUserTags(tags);
+    const before = new Set(doc.tags ?? []);
+    await ctx.db.patch(captureId, { tags: next, searchText: buildSearchText({ ...(doc as any), tags: next }) });
+    await recordTagUse(ctx, identity.subject, next.filter((t) => !before.has(t)));
+    return { tags: next } as const;
+  },
+});
 
 export const patchImageCaptionAndEmbedding = mutation({
   args: {

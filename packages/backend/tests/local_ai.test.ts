@@ -360,7 +360,7 @@ describe("search.searchCaptures", () => {
     expect(await ids("dark forms")).toEqual([]);
   });
 
-  test("searchText follows metadata and AI labels; filters by folder and aiCategory", async () => {
+  test("searchText follows metadata and AI labels; filters by kind and aiCategory", async () => {
     const t = makeT();
     const { a } = await seedAB(t);
     const asA = t.withIdentity(userA);
@@ -381,8 +381,11 @@ describe("search.searchCaptures", () => {
     expect(await find({ query: "inspiration headline" })).toEqual([a.shotId]);
     expect(await find({ query: "hero", aiCategory: "hero" })).toEqual([a.shotId]);
     expect(await find({ query: "hero", aiCategory: "pricing" })).toEqual([]);
-    expect(await find({ query: "hero", folder: "unsorted" })).toEqual([a.shotId]);
-    expect(await find({ query: "hero", folder: "work" })).toEqual([]);
+    expect(await find({ query: "hero", aiCategories: ["pricing", "hero"] })).toEqual([a.shotId]);
+    expect(await find({ query: "hero", kinds: ["screenshot"] })).toEqual([a.shotId]);
+    expect(await find({ query: "hero", kinds: ["link"] })).toEqual([]);
+    // `folder` (the legacy user category) is no longer a search filter.
+    await expect(find({ query: "hero", folder: "unsorted" })).rejects.toThrow(/folder/);
     const [row] = (await asA.action(api.search.searchCaptures, { query: "hero" })).results;
     expect(row!.score).toBeNull(); // keyword-only: no cosine to show
   });

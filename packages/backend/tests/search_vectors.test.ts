@@ -106,7 +106,7 @@ describe("searchCaptures: query vector validation (768-d)", () => {
   test("anonymous callers are refused before the vector is even looked at", async () => {
     const t = makeT();
     const r = await t.action(api.search.searchCaptures, { query: "x", vector: vec(3) });
-    expect(r).toEqual({ results: [], diagnostics: { error: "Unauthorized" } });
+    expect(r).toEqual({ results: [], cursor: null, isDone: true, diagnostics: { error: "Unauthorized" } });
   });
 });
 

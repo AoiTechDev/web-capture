@@ -156,3 +156,53 @@ export function rrfFuse(
       Object.keys(b.sources).length - Object.keys(a.sources).length
   );
 }
+
+/** Cosine similarity; -1 for vectors of different or zero length. */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a.length || !b.length || a.length !== b.length) return -1;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb) || 1e-9;
+  return dot / denom;
+}
+
+type Scorable = KeywordDoc & { _id: string; _creationTime: number };
+
+/** Keyword hits among `docs`: every term must match; best first, ties newest first. */
+export function rankByKeyword(docs: Scorable[], terms: string[]): RankedHit[] {
+  if (terms.length === 0) return [];
+  return docs
+    .map((d) => ({ id: d._id, score: keywordScore(d, terms), t: d._creationTime }))
+    .filter((h) => h.score > 0)
+    .sort((a, b) => b.score - a.score || b.t - a.t)
+    .map(({ id, score }) => ({ id, score }));
+}
+
+/**
+ * Exact nearest neighbours over `docs`, as a vector index would return
+ * them: cosine of `query` with each doc's `vectorOf` vector, at or above
+ * `floor`, best first. Docs without a vector of the query's size are skipped.
+ */
+export function rankByCosine<D extends { _id: string }>(
+  docs: D[],
+  vectorOf: (d: D) => unknown,
+  query: number[],
+  floor: number
+): RankedHit[] {
+  const out: RankedHit[] = [];
+  for (const d of docs) {
+    const v = vectorOf(d);
+    if (!Array.isArray(v) || v.length !== query.length) continue;
+    const score = cosineSimilarity(query, v as number[]);
+    if (score >= floor) out.push({ id: d._id, score });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}

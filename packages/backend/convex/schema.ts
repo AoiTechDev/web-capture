@@ -385,7 +385,10 @@ export default defineSchema({
     weight: v.float64(),
   })
     .index("by_capture", ["captureId"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    // The colour filter reads only the L band a match can lie in
+    // (lib/search_filters lightnessBand), not every colour the user has.
+    .index("by_user_l", ["userId", "l"]),
   categories: defineTable({
     name: v.string(),
     createdAt: v.float64(),

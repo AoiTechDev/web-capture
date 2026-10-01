@@ -95,6 +95,12 @@ export const SEARCH_TUNING = {
   textRelativeMargin: 0.06,
   /** Candidates fetched from each vector index. */
   vectorCandidates: 64,
+  /**
+   * Candidates fetched when kind, category or other filters apply after the
+   * index (its filter is userId only), so fewer are lost to them. Convex caps
+   * vectorSearch at 256.
+   */
+  filteredVectorCandidates: 256,
   /** Reciprocal Rank Fusion constant: 1 / (k + rank). 60 is the usual default. */
   rrfK: 60,
 } as const;
