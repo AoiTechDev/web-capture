@@ -14,6 +14,8 @@ export type EditorHeaderProps = {
   edited: boolean;
   dirty: boolean;
   saving: boolean;
+  /** Regenerated elsewhere while dirty: Save waits for the banner's choice. */
+  conflict: boolean;
   /** Whether the draft differs from what the generator produced. */
   canReset: boolean;
   saveError: string | null;
@@ -82,7 +84,7 @@ export default function EditorHeader(p: EditorHeaderProps) {
             type="button"
             className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
             onClick={p.onSave}
-            disabled={!p.dirty || p.saving}
+            disabled={!p.dirty || p.saving || p.conflict}
           >
             <Save size={14} aria-hidden /> {p.saving ? "Saving…" : "Save"}
           </button>

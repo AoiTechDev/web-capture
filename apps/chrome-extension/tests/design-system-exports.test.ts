@@ -10,14 +10,19 @@ import { describe, expect, test } from "vitest"
 import { SHADE_STEPS, TYPE_STEPS } from "../../../packages/backend/convex/lib/design_system/types"
 import {
   cssColorToHex,
+  DTCG_EXTENSION,
+  dtcgDimension,
   parseShadow,
   toCssVariables,
   toDesignTokens,
   toDesignTokensJson,
   toTailwindTheme,
 } from "../../web/src/lib/design-system/exports"
-import { cssString } from "../../web/src/lib/design-system/fonts"
+import { cssString, familyName } from "../../web/src/lib/design-system/fonts"
 import { makeTokens } from "./design-system-fixtures"
+
+const NUL = String.fromCharCode(0)
+const REPLACEMENT = String.fromCharCode(0xfffd)
 
 function decls(root: Root): Map<string, string> {
   const out = new Map<string, string>()
@@ -39,6 +44,9 @@ function leaves(group: unknown, path: string[] = [], out = new Map<string, Leaf>
   return out
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>
+
 /** Every token as [css name, tailwind name, json path, value]. */
 function expected(t = makeTokens()): Array<[string, string, string, string]> {
   const rows: Array<[string, string, string, string]> = []
@@ -54,8 +62,8 @@ function expected(t = makeTokens()): Array<[string, string, string, string]> {
   for (const s of TYPE_STEPS) rows.push([`--text-${s}`, `--text-${s}`, `fontSize.${s}`, t.typography.scale[s]])
   for (const [k, v] of Object.entries(t.spacing.scale)) rows.push([`--space-${k}`, `--spacing-${k}`, `spacing.${k}`, v])
   for (const k of ["sm", "md", "lg", "full"] as const) rows.push([`--radius-${k}`, `--radius-${k}`, `radius.${k}`, t.radius[k]])
-  rows.push(["--font-weight-heading", "--font-weight-heading", "fontWeight.heading", "700"])
-  rows.push(["--font-weight-body", "--font-weight-body", "fontWeight.body", "400"])
+  rows.push(["--font-weight-heading", "--font-weight-heading-weight", "fontWeight.heading", "700"])
+  rows.push(["--font-weight-body", "--font-weight-body-weight", "fontWeight.body", "400"])
   rows.push(["--line-height-heading", "--leading-heading", "lineHeight.heading", "1.2"])
   rows.push(["--line-height-body", "--leading-body", "lineHeight.body", "1.5"])
   return rows
@@ -116,12 +124,27 @@ describe("Tailwind v4 @theme", () => {
     for (const s of ["sm", "md", "lg"]) expect(d.get(`--shadow-${s}`)).toBeDefined()
   })
 
-  test("--spacing follows an 8px base", () => {
+  test("weight and family variables never produce the same utility name", () => {
+    // Tailwind v4: --font-<x> -> font-<x> (family), --font-weight-<x> -> font-<x> (weight).
+    const d = decls(root)
+    const keys = [...d.keys()]
+    const families = keys.filter((k) => k.startsWith("--font-") && !k.startsWith("--font-weight-")).map((k) => k.slice(7))
+    const weights = keys.filter((k) => k.startsWith("--font-weight-")).map((k) => k.slice(14))
+    expect(families).toEqual(["heading", "body"])
+    expect(weights).toEqual(["heading-weight", "body-weight"])
+    for (const w of weights) expect(families).not.toContain(w)
+    expect(css).toContain("font-heading-weight don't collide")
+  })
+
+  test("--spacing follows an 8px base, with a comment that it doubles the utilities", () => {
     const t = makeTokens()
     t.spacing = { base: 8, scale: { "0": "0rem", "1": "0.5rem", "4": "2rem" } }
-    const d = decls(postcss.parse(toTailwindTheme(t)))
+    const out = toTailwindTheme(t)
+    const d = decls(postcss.parse(out))
     expect(d.get("--spacing")).toBe("0.5rem")
     expect(d.get("--spacing-4")).toBe("2rem")
+    expect(out).toContain("doubles every numeric sizing utility")
+    expect(css).not.toContain("doubles every numeric sizing utility")
   })
 })
 
@@ -136,7 +159,7 @@ describe("Design Tokens JSON", () => {
     for (const [path, leaf] of all) expect(types.has(leaf.$type ?? ""), path).toBe(true)
   })
 
-  test("carries every token", () => {
+  test("carries every token and states the format", () => {
     for (const [, , path, value] of expected()) {
       const leaf = all.get(path)
       expect(leaf, path).toBeDefined()
@@ -151,7 +174,15 @@ describe("Design Tokens JSON", () => {
     })
     expect(Array.isArray(all.get("shadow.md")!.$value)).toBe(true)
     expect(all.get("shadow.lg")!.$type).toBe("shadow")
-    expect(parsed.$extensions["com.webcapture.designSystem"]).toMatchObject({ mode: "light", typeRatio: 1.25, baseSize: 16, spacingBase: 4 })
+    expect(DTCG_EXTENSION).toBe("app.moodbase")
+    expect(parsed.$extensions[DTCG_EXTENSION]).toMatchObject({
+      format: "dtcg-draft",
+      mode: "light",
+      typeRatio: 1.25,
+      baseSize: 16,
+      spacingBase: 4,
+    })
+    expect(parsed.$extensions[DTCG_EXTENSION].skipped).toBeUndefined()
   })
 
   test("zero dimensions get a unit", () => {
@@ -168,6 +199,7 @@ describe("shadow and colour parsing", () => {
     expect(cssColorToHex("rgb(255, 0, 0)")).toBe("#ff0000")
     expect(cssColorToHex("rgba(0,0,0,0.5)")).toBe("#00000080")
     expect(cssColorToHex("rgb(0 0 0 / 10%)")).toBe("#0000001a")
+    expect(cssColorToHex("oklch(0 0 0 / 0.5)")).toBe("#00000080")
     expect(cssColorToHex("hsl(0 0% 0%)")).toBeNull()
     expect(cssColorToHex("red")).toBeNull()
   })
@@ -183,14 +215,41 @@ describe("shadow and colour parsing", () => {
     })
     expect(parseShadow("0 1px red")).toBeNull()
     expect(parseShadow("none")).toBeNull()
+    expect(parseShadow("0 0.5em 1em #000")).toBeNull()
   })
 
-  test("an unparseable shadow keeps its CSS text untyped in JSON", () => {
+  test("a shadow that can't be a DTCG shadow is left out of the JSON with a note, but kept in CSS", () => {
     const t = makeTokens()
-    t.shadow = { md: "0 1px 2px hsl(0 0% 0% / 0.1)" }
-    const leaf = leaves(toDesignTokens(t)).get("shadow.md")!
-    expect(leaf.$type).toBeUndefined()
-    expect(leaf.$value).toBe("0 1px 2px hsl(0 0% 0% / 0.1)")
+    t.shadow = { md: "0 1px 2px hsl(0 0% 0% / 0.1)", lg: "0 0.5em 1em rgba(0,0,0,0.2)" }
+    const json = toDesignTokens(t) as Json
+    expect(json.shadow).toBeUndefined()
+    expect(json.$extensions[DTCG_EXTENSION].skipped).toEqual([
+      "shadow.md: could not be converted to a DTCG shadow (0 1px 2px hsl(0 0% 0% / 0.1))",
+      "shadow.lg: could not be converted to a DTCG shadow (0 0.5em 1em rgba(0,0,0,0.2))",
+    ])
+    for (const [, leaf] of leaves(json)) expect(leaf.$type).toBeDefined()
+    expect(decls(postcss.parse(toCssVariables(t))).get("--shadow-md")).toBe("0 1px 2px hsl(0 0% 0% / 0.1)")
+  })
+
+  test("em dimensions are skipped in JSON with a note; px and rem pass", () => {
+    expect(dtcgDimension("1.5rem")).toBe("1.5rem")
+    expect(dtcgDimension("12px")).toBe("12px")
+    expect(dtcgDimension("0")).toBe("0px")
+    expect(dtcgDimension("1em")).toBeNull()
+    const t = makeTokens()
+    t.radius.md = "0.5em"
+    t.typography.scale.xl = "1.5em"
+    const json = toDesignTokens(t) as Json
+    const all = leaves(json)
+    expect(all.has("radius.md")).toBe(false)
+    expect(all.has("fontSize.xl")).toBe(false)
+    for (const [, leaf] of all) if (leaf.$type === "dimension") expect(String(leaf.$value)).not.toMatch(/\dem$/)
+    expect(json.$extensions[DTCG_EXTENSION].skipped).toEqual([
+      "fontSize.xl: 1.5em is not a px or rem dimension",
+      "radius.md: 0.5em is not a px or rem dimension",
+    ])
+    // CSS carries em as is.
+    expect(decls(postcss.parse(toCssVariables(t))).get("--radius-md")).toBe("0.5em")
   })
 })
 
@@ -202,7 +261,7 @@ describe("hostile values cannot break out", () => {
     "Line\nbreak",
     "Quote'single",
     "*/ :root { --x: 1 }",
-    "\u0000nul",
+    `${NUL}nul`,
     "Ünïcödé 字体",
   ]
 
@@ -220,8 +279,7 @@ describe("hostile values cannot break out", () => {
       const s = cssString(name)
       const body = s.slice(1, -1)
       expect(body).not.toMatch(/["'{};<>\n*/]/)
-      const expectedName = name.replace(/\u0000/g, "�")
-      expect(decodeCssString(s)).toBe(expectedName)
+      expect(decodeCssString(s)).toBe(name.split(NUL).join(REPLACEMENT))
     }
   })
 
@@ -235,30 +293,49 @@ describe("hostile values cannot break out", () => {
       expect(root.nodes.filter((n) => n.type === "rule" || n.type === "atrule").length).toBe(
         postcss.parse(build(safe)).nodes.filter((n) => n.type === "rule" || n.type === "atrule").length
       )
+      // The name is cleaned as the backend stores it, then escaped.
+      const clean = familyName(name)
       const value = d.get("--font-heading")!
+      if (!clean) {
+        expect(value).toBe("system-ui, sans-serif")
+        continue
+      }
       expect(value.endsWith(", system-ui, sans-serif")).toBe(true)
       const token = value.slice(0, -", system-ui, sans-serif".length)
-      expect(decodeCssString(token)).toBe(name.replace(/\s+/g, " ").trim().replace(/\u0000/g, "�"))
+      expect(decodeCssString(token)).toBe(clean)
+      expect(clean).not.toMatch(/["'\\{};<>\n*/]/)
+      expect(clean.includes(NUL)).toBe(false)
     }
-    // JSON.stringify escapes for us; it must still parse and round-trip the name.
+    // JSON.stringify escapes for us; it must still parse and carry the cleaned name.
     const parsed = JSON.parse(toDesignTokensJson(t))
-    expect(parsed.font.heading.$value).toBe(name.replace(/\s+/g, " ").trim())
+    expect(parsed.font.heading.$value).toBe(familyName(name))
   })
 
-  test("invalid colours, lengths and shadows are dropped, not written", () => {
+  test("familyName matches the backend's cleanFamily", () => {
+    expect(familyName('Evil"; } body { color: red } /*')).toBe("Evil")
+    expect(familyName("</style><script>alert(1)</script>")).toBe("")
+    // cleanFamily drops characters outside its set (a newline included) before collapsing spaces.
+    expect(familyName("Line\nbreak")).toBe("Linebreak")
+    expect(familyName("  Open   Sans ")).toBe("Open Sans")
+    expect(familyName("Ünïcödé 字体")).toBe("Ünïcödé 字体")
+    expect(familyName('"Inter", sans-serif')).toBe("Inter")
+  })
+
+  test("invalid colours, lengths, shadows and spacing keys are dropped, not written", () => {
     const t = makeTokens()
     t.colors.background = "red; } body { x: y"
     t.typography.scale.base = "1rem; color: red"
     t.radius.md = "url(javascript:alert(1))"
     t.shadow = { sm: "0 0 1px red; } a {", md: "0 0 0 var(--x)", lg: "/* */ 0 1px red" }
     t.spacing.scale["4; x"] = "1rem"
+    t.spacing.scale["0.5"] = "0.125rem"
     for (const out of [toCssVariables(t), toTailwindTheme(t)]) {
-      const root = postcss.parse(out)
-      const d = decls(root)
+      const d = decls(postcss.parse(out))
       expect(d.has("--color-background")).toBe(false)
       expect(d.has("--text-base")).toBe(false)
       expect(d.has("--radius-md")).toBe(false)
       expect([...d.keys()].some((k) => k.startsWith("--shadow"))).toBe(false)
+      expect([...d.keys()].some((k) => k.includes(";") || k.includes("0_5") || k.includes("0.5"))).toBe(false)
       expect(out).not.toContain("x: y")
       expect(out).not.toContain("color: red")
       expect(out).not.toContain("javascript")
@@ -268,5 +345,6 @@ describe("hostile values cannot break out", () => {
     expect(all.has("fontSize.base")).toBe(false)
     expect(all.has("radius.md")).toBe(false)
     expect([...all.keys()].some((k) => k.startsWith("shadow"))).toBe(false)
+    expect([...all.keys()].some((k) => k.startsWith("spacing.0.5") || k.includes(";"))).toBe(false)
   })
 })

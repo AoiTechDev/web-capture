@@ -1,8 +1,10 @@
 /**
  * Font family handling for the design system editor, preview and exports.
  *
- * Pure TS with no imports, so the chrome-extension vitest suite can test it.
+ * Pure TS with relative imports only, so the chrome-extension vitest suite can
+ * test it.
  */
+import { cleanFamily } from "../../../../../packages/backend/convex/lib/design_system/typography";
 
 /** Characters that may stand unescaped inside a quoted CSS string. */
 const CSS_STRING_SAFE = /^[A-Za-z0-9 _.-]$/;
@@ -26,17 +28,24 @@ export function cssString(value: string): string {
   return `${out}"`;
 }
 
-/** Collapse whitespace and trim, the form family names are stored in. */
-export function cleanFamilyName(name: string): string {
-  return name.replace(/\s+/g, " ").trim();
+/**
+ * The family name as the backend stores it (typography.ts cleanFamily): the
+ * first name of a stack, cut at `;{}<>`, unquoted, limited to letters, digits,
+ * space and `_ . & + -`. Empty when nothing usable is left.
+ */
+export function familyName(raw: string): string {
+  return cleanFamily(raw) ?? "";
 }
 
 /** Generic fallbacks appended after the chosen family. */
 export const FONT_FALLBACK = "system-ui, sans-serif";
 
-/** `"Inter", system-ui, sans-serif`, or just the fallback for an empty name. */
+/**
+ * `"Inter", system-ui, sans-serif`, or just the fallback when no usable name
+ * is left. The name is cleaned and then still escaped (cssString).
+ */
 export function fontStack(family: string): string {
-  const name = cleanFamilyName(family);
+  const name = familyName(family);
   return name ? `${cssString(name)}, ${FONT_FALLBACK}` : FONT_FALLBACK;
 }
 
@@ -91,7 +100,7 @@ const SYSTEM_FAMILIES = new Set(
 );
 
 export function isSystemFamily(name: string): boolean {
-  return SYSTEM_FAMILIES.has(cleanFamilyName(name).toLowerCase());
+  return SYSTEM_FAMILIES.has(name.replace(/\s+/g, " ").trim().toLowerCase());
 }
 
 /** Whole-hundred weights 100-900, deduplicated and sorted. */

@@ -22,25 +22,34 @@ const PAIR_LABEL: Record<ContrastCheck["pair"], string> = {
   "text/background": "Text on background",
   "textMuted/background": "Muted text on background",
   "text/surface": "Text on surface",
+  "textMuted/surface": "Muted text on surface",
   "primary/background": "Primary on background",
 };
 
-/** "Text on background 3.21:1 - needs 4.5:1 (WCAG AA)" for each failing check. */
-export function ContrastNotes({ checks }: { checks: ContrastCheck[] }) {
+/**
+ * "Text on background is 3.21:1, needs 4.5:1 (WCAG AA)" for each failing
+ * check. The live region is always rendered (empty when all pass) so screen
+ * readers announce a warning when it appears; `id` lets the colour inputs
+ * reference it with aria-describedby.
+ */
+export function ContrastNotes({ id, checks }: { id: string; checks: ContrastCheck[] }) {
   const failing = checks.filter((c) => !c.passes);
-  if (failing.length === 0) return null;
   return (
-    <ul className="mt-1.5 space-y-1">
-      {failing.map((c) => (
-        <li key={c.pair} className="flex items-start gap-1.5 text-[12px] text-[var(--warning)]">
-          <AlertTriangle size={13} className="mt-[1px] flex-none" aria-hidden />
-          <span>
-            {PAIR_LABEL[c.pair]} is {c.ratio.toFixed(2)}:1, needs {c.required}:1 (WCAG AA
-            {c.required === 3 ? ", non-text" : ""})
-          </span>
-        </li>
-      ))}
-    </ul>
+    <div id={id} role="status" aria-live="polite">
+      {failing.length > 0 && (
+        <ul className="mt-1.5 space-y-1">
+          {failing.map((c) => (
+            <li key={c.pair} className="flex items-start gap-1.5 text-[12px] text-[var(--warning)]">
+              <AlertTriangle size={13} className="mt-[1px] flex-none" aria-hidden />
+              <span>
+                {PAIR_LABEL[c.pair]} is {c.ratio.toFixed(2)}:1, needs {c.required}:1 (WCAG AA
+                {c.required === 3 ? ", non-text" : ""})
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -62,6 +71,9 @@ export function ColorField({
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const invalid = normalizeHex(draft) === null;
+  const contrastId = `${id}-contrast`;
+  // Both inputs point at the contrast warnings; the hex field also at its error.
+  const describedBy = [invalid ? `${id}-err` : null, checks.length > 0 ? contrastId : null].filter(Boolean).join(" ") || undefined;
 
   return (
     <div>
@@ -72,6 +84,7 @@ export function ColorField({
         <input
           type="color"
           aria-label={`${label} colour picker`}
+          aria-describedby={checks.length > 0 ? contrastId : undefined}
           value={normalizeHex(value) ?? "#000000"}
           onChange={(e) => onChange(e.target.value)}
           className="h-8 w-10 flex-none cursor-pointer rounded-[var(--radius-sm)] border border-[var(--border-strong)] bg-[var(--bg)] p-0.5"
@@ -84,7 +97,7 @@ export function ColorField({
           autoComplete="off"
           maxLength={7}
           aria-invalid={invalid}
-          aria-describedby={invalid ? `${id}-err` : undefined}
+          aria-describedby={describedBy}
           onChange={(e) => {
             setDraft(e.target.value);
             const hex = normalizeHex(e.target.value);
@@ -103,7 +116,7 @@ export function ColorField({
         </p>
       )}
       {children}
-      <ContrastNotes checks={checks} />
+      {checks.length > 0 && <ContrastNotes id={contrastId} checks={checks} />}
     </div>
   );
 }
@@ -207,7 +220,9 @@ export function FontField({
         ))}
       </datalist>
       <p id={`${id}-hint`} className={`mt-1 text-[12px] ${invalid ? "text-[var(--danger)]" : "text-[var(--text-subtle)]"}`}>
-        {invalid ? `Letters, digits, spaces and - _ . & + only, up to ${MAX_FONT_NAME} characters.` : "Any Google Fonts family; others fall back to system fonts in the preview."}
+        {invalid
+          ? `Letters, digits, spaces and - _ . & + only, up to ${MAX_FONT_NAME} characters.`
+          : "The preview uses this family if it's installed, else system fonts. Turn on Google Fonts below to load it."}
       </p>
     </div>
   );

@@ -8,20 +8,21 @@
  * value that breaks out of its declaration. Font names are always written as
  * escaped CSS strings (see fonts.ts).
  */
+import { parseCssColor, rgbToHex } from "../../../../../packages/backend/convex/lib/color";
 import {
   SHADE_STEPS,
   TYPE_STEPS,
   type ColorScale,
   type DesignSystemTokens,
 } from "../../../../../packages/backend/convex/lib/design_system/types";
-import { isValidShadow } from "../../../../../packages/backend/convex/lib/design_system/validate";
-import { cleanFamilyName, fontStack } from "./fonts";
+import { isHexColor, isValidShadow } from "../../../../../packages/backend/convex/lib/design_system/validate";
+import { familyName, fontStack } from "./fonts";
 
-const HEX_RE = /^#[0-9a-f]{6}$/i;
+/** Lengths the exports write: 0, or a number in rem, px or em. */
 const LENGTH_RE = /^(?:0|\d+(?:\.\d+)?(?:rem|px|em))$/;
 
 export function safeHex(v: unknown): string | null {
-  return typeof v === "string" && HEX_RE.test(v) ? v.toLowerCase() : null;
+  return isHexColor(v) ? v.toLowerCase() : null;
 }
 
 export function safeLength(v: unknown): string | null {
@@ -37,12 +38,6 @@ function safeNumber(v: unknown, min: number, max: number): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null;
 }
 
-/** Custom-property suffixes may only be plain identifier characters. */
-function safeKey(k: string): string | null {
-  const key = k.replace(/\./g, "_");
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : null;
-}
-
 /** `textMuted` -> `text-muted` */
 function kebab(s: string): string {
   return s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
@@ -52,19 +47,21 @@ const BASE_COLORS = ["background", "surface", "border", "text", "textMuted"] as 
 const SHADOW_STEPS = ["sm", "md", "lg"] as const;
 const RADIUS_STEPS = ["sm", "md", "lg", "full"] as const;
 
-/** Spacing keys in numeric order ("0", "1", "2", "3", "4", "6", ...). */
+/**
+ * Spacing steps in numeric order. validateTokens only admits the integer
+ * SPACING_KEYS, so any other key is dropped rather than escaped.
+ */
 function spacingEntries(tokens: DesignSystemTokens): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const [k, v] of Object.entries(tokens.spacing.scale ?? {})) {
-    const key = safeKey(k);
     const value = safeLength(v);
-    if (key && value) out.push([key, value]);
+    if (/^[0-9]+$/.test(k) && value) out.push([k, value]);
   }
-  return out.sort((a, b) => Number(a[0].replace("_", ".")) - Number(b[0].replace("_", ".")));
+  return out.sort((a, b) => Number(a[0]) - Number(b[0]));
 }
 
 type Decl = [name: string, value: string];
-type Section = { comment: string; decls: Decl[] };
+type Section = { comment: string; notes?: string[]; decls: Decl[] };
 
 function scaleDecls(prefix: string, scale: ColorScale | undefined): Decl[] {
   if (!scale) return [];
@@ -76,8 +73,18 @@ function scaleDecls(prefix: string, scale: ColorScale | undefined): Decl[] {
   return out;
 }
 
+/**
+ * Tailwind v4 turns `--font-weight-<name>` into the `font-<name>` utility, the
+ * same name `--font-<name>` gives the family utility. So in @theme the weights
+ * carry a `-weight` suffix: `font-heading` sets the family and
+ * `font-heading-weight` the weight. The plain CSS export has no utilities and
+ * keeps `--font-weight-heading`.
+ */
+export const TAILWIND_WEIGHT_SUFFIX = "-weight";
+
 /** The sections both CSS flavours share; `flavor` picks the variable names. */
 function sections(tokens: DesignSystemTokens, flavor: "css" | "tailwind"): Section[] {
+  const tw = flavor === "tailwind";
   const t = tokens.typography;
   const colors: Decl[] = [];
   for (const key of BASE_COLORS) {
@@ -91,12 +98,13 @@ function sections(tokens: DesignSystemTokens, flavor: "css" | "tailwind"): Secti
     ["--font-heading", fontStack(t.fontHeading)],
     ["--font-body", fontStack(t.fontBody)],
   ];
+  const weight = (role: string) => `--font-weight-${role}${tw ? TAILWIND_WEIGHT_SUFFIX : ""}`;
   const hw = safeNumber(t.headingWeight, 1, 1000);
   const bw = safeNumber(t.bodyWeight, 1, 1000);
-  if (hw !== null) typography.push(["--font-weight-heading", String(hw)]);
-  if (bw !== null) typography.push(["--font-weight-body", String(bw)]);
+  if (hw !== null) typography.push([weight("heading"), String(hw)]);
+  if (bw !== null) typography.push([weight("body"), String(bw)]);
   // Tailwind v4 keeps line heights under --leading-*.
-  const lh = flavor === "tailwind" ? "--leading" : "--line-height";
+  const lh = tw ? "--leading" : "--line-height";
   const hlh = safeNumber(t.headingLineHeight, 0, 10);
   const blh = safeNumber(t.bodyLineHeight, 0, 10);
   if (hlh !== null) typography.push([`${lh}-heading`, String(hlh)]);
@@ -107,14 +115,21 @@ function sections(tokens: DesignSystemTokens, flavor: "css" | "tailwind"): Secti
   }
 
   const spacing: Decl[] = [];
+  const spacingNotes: string[] = [];
   const entries = spacingEntries(tokens);
-  if (flavor === "tailwind") {
+  if (tw) {
     // Tailwind v4 derives every spacing utility from one --spacing unit
     // (p-4 = 4 x --spacing); explicit --spacing-* values pin our steps.
     const one = entries.find(([k]) => k === "1")?.[1] ?? `${tokens.spacing.base === 8 ? 0.5 : 0.25}rem`;
     spacing.push(["--spacing", one]);
+    if (tokens.spacing.base === 8) {
+      spacingNotes.push(
+        "8px base: --spacing is 0.5rem, which doubles every numeric sizing utility",
+        "(p-4, gap-2, w-16, h-8, ...) compared with Tailwind's default 0.25rem."
+      );
+    }
   }
-  const spacePrefix = flavor === "tailwind" ? "--spacing" : "--space";
+  const spacePrefix = tw ? "--spacing" : "--space";
   for (const [k, v] of entries) spacing.push([`${spacePrefix}-${k}`, v]);
 
   const radius: Decl[] = [];
@@ -129,13 +144,19 @@ function sections(tokens: DesignSystemTokens, flavor: "css" | "tailwind"): Secti
     if (v) shadow.push([`--shadow-${step}`, v]);
   }
 
-  return [
+  const typographyNotes =
+    tw && (hw !== null || bw !== null)
+      ? ["Weights end in -weight so font-heading (family) and font-heading-weight don't collide."]
+      : undefined;
+
+  const all: Section[] = [
     { comment: "Colours", decls: colors },
-    { comment: "Typography", decls: typography },
-    { comment: "Spacing", decls: spacing },
+    { comment: "Typography", notes: typographyNotes, decls: typography },
+    { comment: "Spacing", notes: spacingNotes.length ? spacingNotes : undefined, decls: spacing },
     { comment: "Radius", decls: radius },
     { comment: "Shadows", decls: shadow },
-  ].filter((s) => s.decls.length > 0);
+  ];
+  return all.filter((s) => s.decls.length > 0);
 }
 
 function headerComment(tokens: DesignSystemTokens): string {
@@ -152,6 +173,8 @@ function block(selector: string, body: Section[], extra: string[] = []): string 
   body.forEach((s, i) => {
     if (i > 0 || extra.length > 0) lines.push("");
     lines.push(`  /* ${s.comment} */`);
+    // Notes are fixed strings from this module, never token values.
+    for (const note of s.notes ?? []) lines.push(`  /* ${note} */`);
     for (const [n, v] of s.decls) lines.push(`  ${n}: ${v};`);
   });
   lines.push("}");
@@ -170,14 +193,28 @@ export function toTailwindTheme(tokens: DesignSystemTokens): string {
 }
 
 // ---------------------------------------------------------------------------
-// W3C Design Tokens (DTCG draft format: hex colours, dimension strings)
+// W3C Design Tokens, draft format (hex colours, "1rem" dimension strings), the
+// form Style Dictionary and Tokens Studio read. Stated in $extensions.
 // ---------------------------------------------------------------------------
 
-type Token = { $value: unknown; $type?: string; $description?: string };
+/** Vendor key for this app's $extensions. */
+export const DTCG_EXTENSION = "app.moodbase";
+export const DTCG_FORMAT = "dtcg-draft";
+
+type Token = { $value: unknown; $type: string };
 type Group = { [key: string]: Token | Group | unknown };
 
 function tok($value: unknown, $type: string): Token {
   return { $value, $type };
+}
+
+/**
+ * A DTCG draft dimension (px or rem only), or null. `em` depends on the
+ * element's font size, so it can't be converted and is skipped.
+ */
+export function dtcgDimension(v: string): string | null {
+  if (v === "0" || v === "-0") return "0px";
+  return /^-?\d*\.?\d+(?:px|rem)$/.test(v) ? v : null;
 }
 
 /** Split on commas / whitespace that sit outside parentheses. */
@@ -199,42 +236,26 @@ function splitTop(s: string, sep: RegExp): string[] {
   return out;
 }
 
-function hex2(n: number): string {
-  return Math.round(Math.min(255, Math.max(0, n))).toString(16).padStart(2, "0");
-}
-
-/** `#rgb`, `#rrggbb(aa)` or `rgb()/rgba()` with numbers -> DTCG hex (8 digits with alpha). */
+/** A CSS colour as DTCG draft hex (`#rrggbbaa` when translucent), via the backend's parser. */
 export function cssColorToHex(c: string): string | null {
-  const s = c.trim().toLowerCase();
-  if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/.test(s)) return s;
-  if (/^#[0-9a-f]{3}$/.test(s)) return `#${s[1]}${s[1]}${s[2]}${s[2]}${s[3]}${s[3]}`;
-  const m = /^rgba?\(([^)]*)\)$/.exec(s);
-  if (!m) return null;
-  const parts = m[1].split(/[\s,/]+/).filter(Boolean);
-  if (parts.length < 3 || parts.length > 4) return null;
-  const rgb = parts.slice(0, 3).map(Number);
-  if (rgb.some((n) => !Number.isFinite(n))) return null;
-  let a = 1;
-  if (parts[3] !== undefined) {
-    a = parts[3].endsWith("%") ? Number(parts[3].slice(0, -1)) / 100 : Number(parts[3]);
-    if (!Number.isFinite(a)) return null;
-  }
-  const base = `#${rgb.map(hex2).join("")}`;
-  return a >= 1 ? base : `${base}${hex2(a * 255)}`;
+  const rgba = parseCssColor(c, 0);
+  if (!rgba) return null;
+  const hex = rgbToHex([rgba.r, rgba.g, rgba.b]);
+  if (rgba.a >= 1) return hex;
+  return `${hex}${Math.round(rgba.a * 255).toString(16).padStart(2, "0")}`;
 }
 
 /** One CSS box-shadow -> DTCG shadow value(s), or null if it can't be read. */
 export function parseShadow(css: string): Record<string, unknown> | Array<Record<string, unknown>> | null {
-  const layers = splitTop(css, /,/);
   const parsed: Array<Record<string, unknown>> = [];
-  for (const layer of layers) {
-    const parts = splitTop(layer, /\s/);
+  for (const layer of splitTop(css, /,/)) {
     let inset = false;
     let color: string | null = null;
     const lengths: string[] = [];
-    for (const p of parts) {
+    for (const p of splitTop(layer, /\s/)) {
+      const dim = dtcgDimension(p);
       if (p === "inset") inset = true;
-      else if (/^-?(?:0|\d*\.?\d+(?:px|rem|em))$/.test(p)) lengths.push(p === "0" || p === "-0" ? "0px" : p);
+      else if (dim) lengths.push(dim);
       else if (color === null) {
         color = cssColorToHex(p);
         if (color === null) return null;
@@ -268,6 +289,16 @@ function scaleGroup(scale: ColorScale | undefined): Group | null {
 /** The tokens as a W3C Design Tokens object (see toDesignTokensJson). */
 export function toDesignTokens(tokens: DesignSystemTokens): Group {
   const t = tokens.typography;
+  const skipped: string[] = [];
+
+  /** A dimension token, or a note in $extensions when it can't be one. */
+  const dimension = (group: Group, key: string, path: string, raw: unknown) => {
+    const v = safeLength(raw);
+    if (!v) return;
+    const dim = dtcgDimension(v);
+    if (dim) group[key] = tok(dim, "dimension");
+    else skipped.push(`${path}: ${v} is not a px or rem dimension`);
+  };
 
   const color: Group = {};
   for (const key of BASE_COLORS) {
@@ -280,8 +311,8 @@ export function toDesignTokens(tokens: DesignSystemTokens): Group {
   if (secondary) color.secondary = secondary;
 
   const font: Group = {
-    heading: tok(cleanFamilyName(t.fontHeading), "fontFamily"),
-    body: tok(cleanFamilyName(t.fontBody), "fontFamily"),
+    heading: tok(familyName(t.fontHeading), "fontFamily"),
+    body: tok(familyName(t.fontBody), "fontFamily"),
   };
   const fontWeight: Group = {};
   const hw = safeNumber(t.headingWeight, 1, 1000);
@@ -294,40 +325,36 @@ export function toDesignTokens(tokens: DesignSystemTokens): Group {
   if (hlh !== null) lineHeight.heading = tok(hlh, "number");
   if (blh !== null) lineHeight.body = tok(blh, "number");
   const fontSize: Group = {};
-  for (const step of TYPE_STEPS) {
-    const size = safeLength(t.scale?.[step]);
-    if (size) fontSize[step] = tok(size === "0" ? "0px" : size, "dimension");
-  }
+  for (const step of TYPE_STEPS) dimension(fontSize, step, `fontSize.${step}`, t.scale?.[step]);
 
   const spacing: Group = {};
-  for (const [k, v] of spacingEntries(tokens)) spacing[k] = tok(v === "0" ? "0px" : v, "dimension");
+  for (const [k, v] of spacingEntries(tokens)) dimension(spacing, k, `spacing.${k}`, v);
 
   const radius: Group = {};
-  for (const step of RADIUS_STEPS) {
-    const v = safeLength(tokens.radius[step]);
-    if (v) radius[step] = tok(v === "0" ? "0px" : v, "dimension");
-  }
+  for (const step of RADIUS_STEPS) dimension(radius, step, `radius.${step}`, tokens.radius[step]);
 
   const shadow: Group = {};
   for (const step of SHADOW_STEPS) {
     const css = safeShadow(tokens.shadow?.[step]);
     if (!css) continue;
     const value = parseShadow(css);
-    // A shadow we can't decompose keeps its CSS text, untyped, rather than vanish.
-    shadow[step] = value ? tok(value, "shadow") : { $value: css, $description: "CSS box-shadow" };
+    if (value) shadow[step] = tok(value, "shadow");
+    else skipped.push(`shadow.${step}: could not be converted to a DTCG shadow (${css})`);
   }
 
+  const meta: Record<string, unknown> = {
+    format: DTCG_FORMAT,
+    version: 1,
+    mode: tokens.mode === "dark" ? "dark" : "light",
+    typeRatio: safeNumber(t.ratio, 1, 3),
+    baseSize: safeNumber(t.baseSize, 1, 100),
+    spacingBase: tokens.spacing.base === 8 ? 8 : 4,
+  };
+  if (skipped.length) meta.skipped = skipped;
+
   const out: Group = {
-    $description: "Design system generated by Web Capture",
-    $extensions: {
-      "com.webcapture.designSystem": {
-        version: 1,
-        mode: tokens.mode === "dark" ? "dark" : "light",
-        typeRatio: safeNumber(t.ratio, 1, 3),
-        baseSize: safeNumber(t.baseSize, 1, 100),
-        spacingBase: tokens.spacing.base === 8 ? 8 : 4,
-      },
-    },
+    $description: "Design system tokens (W3C Design Tokens, draft format)",
+    $extensions: { [DTCG_EXTENSION]: meta },
     color,
     font,
   };

@@ -6,6 +6,7 @@ import {
   type DesignSystemTokens,
 } from "../../../../../packages/backend/convex/lib/design_system/types";
 import {
+  addSecondary,
   BASE_SIZE_MAX,
   BASE_SIZE_MIN,
   parseRem,
@@ -17,6 +18,8 @@ import {
   setSpacingBase,
   setTypeScale,
   setTypography,
+  typeScaleNotes,
+  withCurrent,
   type BaseColorKey,
 } from "@/lib/design-system/edit";
 import { ColorField, FontField, LABEL, NumberField, ScaleSwatches, Section, SelectField } from "./fields";
@@ -34,28 +37,29 @@ const PAIR_FIELD: Record<ContrastCheck["pair"], string> = {
   "text/background": "text",
   "textMuted/background": "textMuted",
   "text/surface": "surface",
+  "textMuted/surface": "surface",
   "primary/background": "primary",
 };
 
-const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900].map((w) => ({ value: w, label: String(w) }));
+const WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
 
-function ratioOptions(current: number) {
-  const ratios: number[] = [...TYPE_RATIOS];
-  if (!ratios.includes(current)) ratios.push(current);
-  return ratios.sort((a, b) => a - b).map((r) => ({ value: r, label: String(r) }));
-}
 
 export default function TokenEditor({
   tokens,
   contrast,
   onChange,
+  googleFonts,
+  onGoogleFontsChange,
 }: {
   tokens: DesignSystemTokens;
   contrast: ContrastCheck[];
   onChange: (t: DesignSystemTokens) => void;
+  googleFonts: boolean;
+  onGoogleFontsChange: (on: boolean) => void;
 }) {
   const checksFor = (field: string) => contrast.filter((c) => PAIR_FIELD[c.pair] === field);
   const ty = tokens.typography;
+  const scaleNotes = typeScaleNotes(tokens);
   const radiusMdPx = Math.round((parseRem(tokens.radius.md) ?? 0.5) * 16 * 100) / 100;
 
   return (
@@ -99,7 +103,7 @@ export default function TokenEditor({
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => onChange(setScale500(tokens, "secondary", tokens.colors.primary["700"]))}
+            onClick={() => onChange(addSecondary(tokens))}
           >
             Add a secondary colour
           </button>
@@ -117,11 +121,26 @@ export default function TokenEditor({
           value={ty.fontBody}
           onChange={(fontBody) => onChange(setTypography(tokens, { fontBody }))}
         />
+        <div>
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--text)]">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[var(--blue-500)]"
+              checked={googleFonts}
+              aria-describedby="ds-google-fonts-hint"
+              onChange={(e) => onGoogleFontsChange(e.target.checked)}
+            />
+            Load fonts from Google for the preview
+          </label>
+          <p id="ds-google-fonts-hint" className="mt-1 text-[12px] text-[var(--text-subtle)]">
+            Sends a request (with your IP address) to Google Fonts. Off: the preview uses installed fonts.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <SelectField
             label="Scale ratio"
             value={ty.ratio}
-            options={ratioOptions(ty.ratio)}
+            options={withCurrent(TYPE_RATIOS, ty.ratio)}
             onChange={(ratio) => onChange(setTypeScale(tokens, { ratio }))}
           />
           <NumberField
@@ -136,13 +155,13 @@ export default function TokenEditor({
           <SelectField
             label="Heading weight"
             value={ty.headingWeight}
-            options={WEIGHTS}
+            options={withCurrent(WEIGHTS, ty.headingWeight)}
             onChange={(headingWeight) => onChange(setTypography(tokens, { headingWeight }))}
           />
           <SelectField
             label="Body weight"
             value={ty.bodyWeight}
-            options={WEIGHTS}
+            options={withCurrent(WEIGHTS, ty.bodyWeight)}
             onChange={(bodyWeight) => onChange(setTypography(tokens, { bodyWeight }))}
           />
           <NumberField
@@ -167,6 +186,13 @@ export default function TokenEditor({
             .map(([step, size]) => `${step} ${size}`)
             .join(" · ")}
         </p>
+        {scaleNotes.length > 0 && (
+          <ul className="space-y-0.5 text-[12px] text-[var(--text-muted)]">
+            {scaleNotes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       <Section title="Spacing & radius">

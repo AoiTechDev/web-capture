@@ -9,10 +9,30 @@ import { contrastRatio } from "../../../packages/backend/convex/lib/design_syste
 import { hexToOklch } from "../../../packages/backend/convex/lib/design_system/oklch"
 import { SHADE_STEPS, TYPE_STEPS } from "../../../packages/backend/convex/lib/design_system/types"
 import { validateTokens } from "../../../packages/backend/convex/lib/design_system/validate"
+import { ConvexError } from "convex/values"
+
+import { REGENERATED_ELSEWHERE } from "../../../packages/backend/convex/lib/design_system/types"
 import {
+  draftAfterSave,
+  isDirty,
+  isRegenConflict,
+  isRegeneratedElsewhere,
+  shownTokens,
+} from "../../web/src/lib/design-system/draft"
+import {
+  GOOGLE_FONTS_OPT_IN_KEY,
+  readGoogleFontsOptIn,
+  writeGoogleFontsOptIn,
+} from "../../web/src/lib/design-system/font-consent"
+import {
+  addSecondary,
+  BASE_SIZE_MAX,
+  BASE_SIZE_MIN,
   normalizeHex,
   parseRem,
   removeSecondary,
+  SECONDARY_HUE_SHIFT,
+  seedSecondaryHex,
   setBaseColor,
   setRadiusMd,
   setScale500,
@@ -20,6 +40,8 @@ import {
   setTypeScale,
   stableStringify,
   tokensEqual,
+  typeScaleNotes,
+  withCurrent,
 } from "../../web/src/lib/design-system/edit"
 import { convexErrorMessage } from "../../web/src/lib/design-system/errors"
 import {
@@ -107,6 +129,22 @@ describe("colour scale (buildScale via setScale500)", () => {
     expect(setScale500(t, "secondary", "#F0A").colors.secondary!["500"]).toBe("#ff00aa")
   })
 
+  test("a new secondary is seeded from primary's hue turned ~150 degrees", () => {
+    for (const hex of ["#6d28d9", "#3b82f6", "#ef4444", "#16a34a"]) {
+      const seed = seedSecondaryHex(hex)!
+      const a = hexToOklch(hex)!
+      const b = hexToOklch(seed)!
+      const turn = (((b.h - a.h) % 360) + 360) % 360
+      // Gamut clamping keeps the hue; 8-bit rounding moves it a little.
+      expect(Math.abs(turn - SECONDARY_HUE_SHIFT)).toBeLessThan(4)
+      expect(Math.abs(b.l - a.l)).toBeLessThan(0.02)
+    }
+    const t = addSecondary(removeSecondary(makeTokens()))
+    expect(t.colors.secondary!["500"]).toBe(seedSecondaryHex(t.colors.primary["500"]))
+    expect(t.colors.secondary!["500"]).not.toBe(t.colors.primary["700"])
+    expect(seedSecondaryHex("nope")).toBeNull()
+  })
+
   test("removeSecondary drops the scale", () => {
     expect(removeSecondary(makeTokens()).colors.secondary).toBeUndefined()
   })
@@ -118,6 +156,9 @@ describe("token edits", () => {
     expect(normalizeHex(" #1D4ED8 ")).toBe("#1d4ed8")
     expect(normalizeHex("#12345")).toBeNull()
     expect(normalizeHex("red")).toBeNull()
+    // Alpha forms are not colours here (the backend's normalizeHex rejects them).
+    expect(normalizeHex("#abcd")).toBeNull()
+    expect(normalizeHex("#aabbccdd")).toBeNull()
   })
 
   test("setBaseColor writes lowercase hex and ignores garbage", () => {
@@ -130,13 +171,28 @@ describe("token edits", () => {
     const t = setTypeScale(makeTokens(), { ratio: 1.5, baseSize: 18 })
     expect(t.typography.ratio).toBe(1.5)
     expect(t.typography.scale.base).toBe("1.125rem")
-    expect(t.typography.scale.lg).toBe("1.688rem")
-    expect(t.typography.scale.xs).toBe("0.5rem")
+    // 18 x 1.5^6 would pass 96px, so 5xl is capped at 6rem; small steps divide by 1.2.
+    expect(t.typography.scale["5xl"]).toBe("6rem")
+    expect(t.typography.scale.sm).toBe("0.9375rem")
     for (let i = 1; i < TYPE_STEPS.length; i++) {
       expect(parseRem(t.typography.scale[TYPE_STEPS[i]])!).toBeGreaterThan(parseRem(t.typography.scale[TYPE_STEPS[i - 1]])!)
     }
-    // Base size is clamped to the editor's range.
-    expect(setTypeScale(makeTokens(), { baseSize: 400 }).typography.baseSize).toBe(24)
+    expect(typeScaleNotes(t).some((n) => n.startsWith("5xl capped at 96px"))).toBe(true)
+    expect(typeScaleNotes(setTypeScale(makeTokens(), { ratio: 1.125, baseSize: 16 }))).toEqual([])
+    expect(typeScaleNotes(makeTokens())).toEqual(["Small type steps floored at 12px"])
+    // Base size is clamped to what validateTokens accepts.
+    expect([BASE_SIZE_MIN, BASE_SIZE_MAX]).toEqual([12, 32])
+    expect(setTypeScale(makeTokens(), { baseSize: 400 }).typography.baseSize).toBe(32)
+    expect(setTypeScale(makeTokens(), { baseSize: 8 }).typography.baseSize).toBe(12)
+    expect(() => validateTokens(setTypeScale(makeTokens(), { baseSize: 8 }))).not.toThrow()
+  })
+
+  test("withCurrent keeps an off-step current value selectable", () => {
+    const weights = [100, 200, 300, 400, 500, 600, 700, 800, 900]
+    expect(withCurrent(weights, 650).map((o) => o.value)).toEqual([100, 200, 300, 400, 500, 600, 650, 700, 800, 900])
+    expect(withCurrent(weights, 700)).toHaveLength(9)
+    expect(withCurrent([1.125, 1.2, 1.25, 1.333, 1.5], 1.414).map((o) => o.label)).toContain("1.414")
+    expect(withCurrent(weights, Number.NaN)).toHaveLength(9)
   })
 
   test("setSpacingBase doubles the scale for 8px", () => {
@@ -215,5 +271,97 @@ describe("preview variables", () => {
     expect(onColor("#fde047", "#422006")).toBe("#422006")
     expect(onColor("#1d4ed8", "#172554")).toBe("#ffffff")
     expect(contrastRatio(onColor("#6d28d9", "#2e1065"), "#6d28d9")).toBeGreaterThan(4.5)
+  })
+})
+
+describe("draft bookkeeping", () => {
+  const stored = makeTokens()
+  const edited = setBaseColor(stored, "text", "#000000")
+
+  test("shows the stored tokens until there is a draft", () => {
+    expect(shownTokens(null, stored)).toBe(stored)
+    expect(shownTokens(edited, stored)).toBe(edited)
+    expect(shownTokens(null, undefined)).toBeUndefined()
+  })
+
+  test("dirty compares with the last save until the row catches up", () => {
+    expect(isDirty(null, stored, null)).toBe(false)
+    expect(isDirty(edited, stored, null)).toBe(true)
+    expect(isDirty(edited, stored, edited)).toBe(false)
+    expect(isDirty(stored, stored, null)).toBe(false)
+  })
+
+  test("edits made during a save are kept", () => {
+    const later = setBaseColor(edited, "background", "#fefefe")
+    expect(draftAfterSave(edited, edited, edited)).toBe(edited)
+    expect(draftAfterSave(later, edited, edited)).toBe(later)
+    const cleaned = { ...edited }
+    expect(draftAfterSave(edited, edited, cleaned)).toBe(cleaned)
+    expect(draftAfterSave(null, edited, cleaned)).toBe(cleaned)
+  })
+
+  test("a regeneration under unsaved edits is a conflict", () => {
+    const base = { dirty: true, baseGeneratedAt: 100, rowGeneratedAt: 100, serverRefused: false }
+    expect(isRegenConflict(base)).toBe(false)
+    expect(isRegenConflict({ ...base, rowGeneratedAt: 101 })).toBe(true)
+    expect(isRegenConflict({ ...base, rowGeneratedAt: 101, dirty: false })).toBe(false)
+    expect(isRegenConflict({ ...base, serverRefused: true })).toBe(true)
+    expect(isRegenConflict({ ...base, baseGeneratedAt: null, rowGeneratedAt: 101 })).toBe(false)
+  })
+
+  test("recognises save's Regenerated elsewhere error", () => {
+    expect(isRegeneratedElsewhere(new ConvexError(REGENERATED_ELSEWHERE))).toBe(true)
+    expect(isRegeneratedElsewhere(new ConvexError("something else"))).toBe(false)
+    expect(isRegeneratedElsewhere(new Error(REGENERATED_ELSEWHERE))).toBe(false)
+    expect(isRegeneratedElsewhere(null)).toBe(false)
+    expect(isRegeneratedElsewhere("Regenerated elsewhere")).toBe(false)
+  })
+})
+
+describe("Google Fonts opt-in", () => {
+  function memoryStorage() {
+    const m = new Map<string, string>()
+    return {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+      removeItem: (k: string) => void m.delete(k),
+      map: m,
+    }
+  }
+  const throwing = {
+    getItem: (): string | null => {
+      throw new Error("SecurityError")
+    },
+    setItem: () => {
+      throw new Error("QuotaExceededError")
+    },
+    removeItem: () => {
+      throw new Error("SecurityError")
+    },
+  }
+
+  test("off by default, remembered when turned on, forgotten when turned off", () => {
+    const s = memoryStorage()
+    expect(readGoogleFontsOptIn(s)).toBe(false)
+    expect(writeGoogleFontsOptIn(true, s)).toBe(true)
+    expect(s.map.get(GOOGLE_FONTS_OPT_IN_KEY)).toBe("1")
+    expect(readGoogleFontsOptIn(s)).toBe(true)
+    expect(writeGoogleFontsOptIn(false, s)).toBe(true)
+    expect(readGoogleFontsOptIn(s)).toBe(false)
+  })
+
+  test("blocked or missing storage reads as off and never throws", () => {
+    expect(readGoogleFontsOptIn(throwing)).toBe(false)
+    expect(writeGoogleFontsOptIn(true, throwing)).toBe(false)
+    expect(readGoogleFontsOptIn(null)).toBe(false)
+    expect(writeGoogleFontsOptIn(true, null)).toBe(false)
+  })
+
+  test("uses window.localStorage by default", () => {
+    window.localStorage.removeItem(GOOGLE_FONTS_OPT_IN_KEY)
+    expect(readGoogleFontsOptIn()).toBe(false)
+    writeGoogleFontsOptIn(true)
+    expect(readGoogleFontsOptIn()).toBe(true)
+    writeGoogleFontsOptIn(false)
   })
 })

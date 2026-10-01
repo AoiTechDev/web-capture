@@ -6,22 +6,25 @@
  * Relative imports only, so the chrome-extension vitest suite can test it.
  */
 import {
+  buildTypeScale,
+  clamp,
   radiusScale,
   spacingScale,
-  typeScale,
 } from "../../../../../packages/backend/convex/lib/design_system/builders";
-import { buildScale } from "../../../../../packages/backend/convex/lib/design_system/scale";
+import { hexToOklch, oklchToHex } from "../../../../../packages/backend/convex/lib/design_system/oklch";
+import { buildScale, normalizeHex as normalizeHashedHex } from "../../../../../packages/backend/convex/lib/design_system/scale";
 import type { DesignSystemTokens } from "../../../../../packages/backend/convex/lib/design_system/types";
 
 export type BaseColorKey = "background" | "surface" | "border" | "text" | "textMuted";
 export type ScaleColorKey = "primary" | "secondary";
 
-/** `#abc` / `abc` / `#aabbcc` -> lowercase `#aabbcc`, or null. */
+/**
+ * The backend's normalizeHex (lowercase `#rrggbb` from `#rgb` / `#rrggbb`),
+ * also accepting the `#` left off, as people type it into the hex field.
+ */
 export function normalizeHex(input: string): string | null {
-  const s = input.trim().replace(/^#/, "").toLowerCase();
-  if (/^[0-9a-f]{6}$/.test(s)) return `#${s}`;
-  if (/^[0-9a-f]{3}$/.test(s)) return `#${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}`;
-  return null;
+  const s = input.trim();
+  return normalizeHashedHex(s.startsWith("#") ? s : `#${s}`);
 }
 
 /** "1.25rem" -> 1.25, "8px" -> 0.5; null when it isn't a length. */
@@ -47,14 +50,37 @@ export function setScale500(t: DesignSystemTokens, key: ScaleColorKey, hex: stri
   return { ...t, colors: { ...t.colors, [key]: buildScale(h) } };
 }
 
+/** How far "Add a secondary colour" turns primary's hue: near-complementary. */
+export const SECONDARY_HUE_SHIFT = 150;
+
+/** primary-500 with its OKLCH hue rotated by SECONDARY_HUE_SHIFT (lightness and chroma kept). */
+export function seedSecondaryHex(primary500: string): string | null {
+  const hex = normalizeHex(primary500);
+  const o = hex ? hexToOklch(hex) : null;
+  if (!o) return null;
+  return oklchToHex({ ...o, h: (o.h + SECONDARY_HUE_SHIFT) % 360 });
+}
+
+/** Adds a secondary scale seeded from primary (seedSecondaryHex). */
+export function addSecondary(t: DesignSystemTokens): DesignSystemTokens {
+  const seed = seedSecondaryHex(t.colors.primary["500"]);
+  return seed ? setScale500(t, "secondary", seed) : t;
+}
+
 export function removeSecondary(t: DesignSystemTokens): DesignSystemTokens {
   const colors = { ...t.colors };
   delete colors.secondary;
   return { ...t, colors };
 }
 
-export const BASE_SIZE_MIN = 10;
-export const BASE_SIZE_MAX = 24;
+/** The base sizes validateTokens accepts (px). */
+export const BASE_SIZE_MIN = 12;
+export const BASE_SIZE_MAX = 32;
+
+/** Notes the type scale builder gives for these settings (floored small steps, capped 5xl). */
+export function typeScaleNotes(t: DesignSystemTokens): string[] {
+  return buildTypeScale(t.typography.baseSize, t.typography.ratio).notes;
+}
 
 export function setTypeScale(t: DesignSystemTokens, patch: { ratio?: number; baseSize?: number }): DesignSystemTokens {
   const ratio = patch.ratio ?? t.typography.ratio;
@@ -62,7 +88,7 @@ export function setTypeScale(t: DesignSystemTokens, patch: { ratio?: number; bas
   if (!Number.isFinite(ratio) || ratio <= 1 || !Number.isFinite(baseSize)) return t;
   return {
     ...t,
-    typography: { ...t.typography, ratio, baseSize, scale: typeScale(baseSize, ratio) },
+    typography: { ...t.typography, ratio, baseSize, scale: buildTypeScale(baseSize, ratio).scale },
   };
 }
 
@@ -89,8 +115,14 @@ export function setRadiusMd(t: DesignSystemTokens, mdPx: number): DesignSystemTo
   return { ...t, radius: radiusScale(Math.min(mdPx, RADIUS_MD_MAX_PX)) };
 }
 
-export function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n));
+/** The standard steps plus `current` when it is none of them, sorted; a select can't show a value it lacks. */
+export function withCurrent(
+  standard: readonly number[],
+  current: number
+): Array<{ value: number; label: string }> {
+  const values: number[] = [...standard];
+  if (Number.isFinite(current) && !values.includes(current)) values.push(current);
+  return values.sort((a, b) => a - b).map((v) => ({ value: v, label: String(v) }));
 }
 
 /** Stable JSON (sorted keys) so equal tokens compare equal regardless of key order. */

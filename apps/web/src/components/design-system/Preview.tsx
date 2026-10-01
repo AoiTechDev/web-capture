@@ -10,10 +10,18 @@ import { previewVars } from "@/lib/design-system/preview";
  * font, size, space, radius and shadow below reads a --ds-* custom property
  * set on this container (previewVars), never the dashboard's own theme.
  */
-export default function Preview({ tokens }: { tokens: DesignSystemTokens }) {
+export default function Preview({
+  tokens,
+  googleFonts,
+}: {
+  tokens: DesignSystemTokens;
+  /** The viewer opted in to loading the families from Google Fonts. */
+  googleFonts: boolean;
+}) {
   const t = tokens.typography;
-  useGoogleFont(t.fontHeading, [t.headingWeight]);
-  useGoogleFont(t.fontBody, [t.bodyWeight, 600]);
+  // Without the opt-in the stacks still name the family, so an installed copy is used.
+  useGoogleFont(t.fontHeading, [t.headingWeight], googleFonts);
+  useGoogleFont(t.fontBody, [t.bodyWeight, 600], googleFonts);
 
   const hasSecondary = !!tokens.colors.secondary;
   const vars = previewVars(tokens) as CSSProperties;
