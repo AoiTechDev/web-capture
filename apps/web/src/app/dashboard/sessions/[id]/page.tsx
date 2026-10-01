@@ -11,6 +11,7 @@ import { Id } from "../../../../../../../packages/backend/convex/_generated/data
 import LinkList from "@/components/LinkList";
 import TextWrapLayout from "@/components/TextWrapLayout";
 import type { CaptureDetails } from "@/components/DesignDnaPanel";
+import GenerateDesignSystem from "@/components/design-system/GenerateDesignSystem";
 
 /** The query builds these rows dynamically, so name the shape explicitly here. */
 type SessionItem = CaptureDetails & {
@@ -103,6 +104,10 @@ export default function SessionDetailPage({
             ))}
           </div>
         )}
+
+        <div className="mt-4">
+          <GenerateDesignSystem sessionId={id as Id<"sessions">} />
+        </div>
       </header>
 
       <div className="p-6">
