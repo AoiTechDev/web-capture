@@ -12,6 +12,7 @@ import { Search, Images, Camera, Link, FileText } from "lucide-react";
 import { useAction } from "convex/react";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { CaptureDetails } from "@/components/DesignDnaPanel";
+import { useQueryEmbedding } from "@/hooks/useQueryEmbedding";
 
 
 type Kind = "image" | "text" | "link" | "code" | "screenshot";
@@ -31,12 +32,11 @@ const KINDS_FOR_TAB: Record<Kind, NonNullable<SearchArgs["kinds"]>> = {
 };
 
 /**
- * Arguments for `search.searchCaptures`. Keyword-only for now. Once the
- * dashboard runs the local text encoder, pass the two query embeddings:
- * `vector` = the query embedded via lib/ai_config `imageQueryText` (matched
- * against image captures) and `textVector` = the raw query embedded
- * (matched against text captures). The action fuses them with the keyword
- * hits; nothing else here changes.
+ * Arguments for `search.searchCaptures`. `vectors.vector` is the query
+ * embedded by the Chrome extension's local model (useQueryEmbedding); with
+ * SigLIP2 that one vector serves both the image and the text index, so
+ * `textVector` stays unset. Without a vector the action searches by keyword
+ * only, through the same path.
  */
 function buildSearchArgs(
   query: string,
@@ -111,6 +111,7 @@ export default function DashboardPage() {
   // shows the previous tab's kinds in the wrong layout.
   const [search, setSearch] = useState<{ kind: Kind; rows: SearchRow[] } | null>(null);
   const runSearch = useAction(api.search.searchCaptures);
+  const { embed, status: modelStatus } = useQueryEmbedding();
 
   const { data: captures, isLoading: capturesLoading } = useCachedQuery(
     api.captures.byCategoryAndKind,
@@ -162,9 +163,16 @@ export default function DashboardPage() {
   );
 
   const searching = !!q.trim();
+  const modelLoading = modelStatus === "loading";
 
-  // Hybrid search action (keyword-only until the dashboard embeds queries).
+  // Hybrid search: the query vector comes from the extension when it is
+  // installed and answers in time, else the same action runs keyword-only.
   // Debounced, and a newer keystroke discards an older response.
+  //
+  // While the model is still loading (a cold start can take minutes), no
+  // search waits for the vector: keyword results show at once and the query
+  // still goes to the extension. Its first vector turns the status "ready",
+  // which re-runs this effect for the current query, now hybrid.
   useEffect(() => {
     const query = q.trim();
     if (!query) {
@@ -173,19 +181,35 @@ export default function DashboardPage() {
     }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
+      let vector: number[] | null = null;
+      if (modelLoading) {
+        void embed(query).catch(() => null);
+      } else {
+        // Resolves to null within ~3s (DEFAULT_EMBED_TIMEOUT_MS) when the
+        // extension is missing, errors or is slow; the catch is belt and braces.
+        vector = await embed(query).catch(() => null);
+      }
+      if (cancelled) return;
       try {
-        const { results } = await runSearch(buildSearchArgs(query, selectedKind));
+        const args = buildSearchArgs(query, selectedKind, vector ? { vector } : {});
+        const { results } = await runSearch(args).catch((err) => {
+          // A vector the backend refuses (say, an extension on another model)
+          // must not cost the user their results: retry by keyword.
+          if (!vector) throw err;
+          console.warn("Hybrid search failed, retrying by keyword:", err);
+          return runSearch(buildSearchArgs(query, selectedKind));
+        });
         if (!cancelled) setSearch({ kind: selectedKind, rows: results });
       } catch (err) {
         console.error("Search failed:", err);
         if (!cancelled) setSearch({ kind: selectedKind, rows: [] });
       }
-    }, 200);
+    }, 300);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [q, selectedKind, runSearch]);
+  }, [q, selectedKind, runSearch, embed, modelLoading]);
 
   // Search rows reshaped into what each tab's layout reads.
   const searchRows = search && search.kind === selectedKind ? search.rows : null;
@@ -283,7 +307,10 @@ export default function DashboardPage() {
         <p className="text-[12px] text-[var(--text-muted)]">
           {isLoading ? " " : `${total} ${total === 1 ? "capture" : "captures"}`}
         </p>
-        <p className="text-[12px] text-[var(--text-muted)]">{searching ? "Best match" : "Newest first"}</p>
+        <p className="text-[12px] text-[var(--text-muted)]">
+          {/* Shown only while the extension's model is still loading for the first time. */}
+          {searching ? (modelStatus === "loading" ? "Loading search model…" : "Best match") : "Newest first"}
+        </p>
       </div>
 
       <div id="content-area" className="flex-1 overflow-y-auto px-6 pb-6 pt-2">

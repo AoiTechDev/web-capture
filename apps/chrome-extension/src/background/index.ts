@@ -10,6 +10,12 @@ import { runReindex, isReindexing } from '~background/functions/reindex';
 import { broadcastSessionState } from '~background/functions/session-broadcast';
 import { kickProcessingQueue, notifySignedIn, startProcessingQueue } from '~background/functions/processing-queue';
 import { embedText } from '~background/functions/local-embeddings';
+import {
+  createExternalEmbedder,
+  handleExternalMessage,
+  NOT_ALLOWED,
+  parseAllowedHost,
+} from '~background/functions/external-messages';
 import { imageQueryText } from '../../../../packages/backend/convex/lib/ai_config';
 
 
@@ -23,7 +29,7 @@ const convex = new ConvexClient(process.env.PLASMO_PUBLIC_CONVEX_URL!);
 // Build marker: prints on every service worker start. If the value below
 // does not match the running console output, Chrome is serving a cached
 // worker and the extension needs a real reload.
-const BUILD_MARKER = 'phase-3 ai-queue 2026-09-29';
+const BUILD_MARKER = 'phase-3b siglip2 2026-10-01';
 console.log('[Service Worker] BUILD:', BUILD_MARKER);
 
 /* ─── Auth ──────────────────────────────────────────────────────── */
@@ -117,18 +123,15 @@ function errorMessage(e: unknown): string {
 
 /**
  * Search the caller's captures through the one hybrid search action. With
- * `embed`, the query is embedded twice - caption-phrased for image captures,
- * raw for text captures - and fused with keyword hits; without it (or if the
- * model is unavailable) the same action runs keyword-only.
+ * `embed`, the query is embedded once (SigLIP2's raw-query vector serves both
+ * the image and the text index) and fused with keyword hits; without it (or
+ * if the model is unavailable) the same action runs keyword-only.
  */
 async function searchCaptures(q: string, limit: number, embed: boolean) {
-  let vectors: { vector?: number[]; textVector?: number[] } = {};
+  let vector: number[] | undefined;
   if (embed && q) {
     try {
-      // Sequential: the offscreen document runs one inference at a time.
-      const vector = await embedText(imageQueryText(q));
-      const textVector = await embedText(q);
-      vectors = { vector, textVector };
+      vector = await embedText(imageQueryText(q));
     } catch (e) {
       console.log('[Search] query embedding unavailable, keyword only:', e);
     }
@@ -136,10 +139,10 @@ async function searchCaptures(q: string, limit: number, embed: boolean) {
   const { results, diagnostics } = await convex.action(api.search.searchCaptures, {
     query: q,
     limit,
-    ...vectors,
+    ...(vector ? { vector } : {}),
   });
   console.log('[Search]', JSON.stringify(q), '->', results.length, 'results', JSON.stringify(diagnostics));
-  return { results, mode: vectors.vector ? 'hybrid' : 'keyword' };
+  return { results, mode: vector ? 'hybrid' : 'keyword' };
 }
 
 // ── Enrichment queue: embeds and tags pending captures locally ──
@@ -147,12 +150,25 @@ async function searchCaptures(q: string, limit: number, embed: boolean) {
 // (notifySignedIn) as soon as a session appears.
 void startProcessingQueue(convex, { isSignedIn: syncAuth });
 
-// ── Pre-load CLIP models in the background so first capture is fast ──
+// ── Pre-load the local model in the background so first capture is fast ──
 // This is fire-and-forget; if it fails the models load lazily on first use.
 import('./functions/local-embeddings')
   .then((m) => m.warmup())
-  .then(() => console.log('[Service Worker] ✅ CLIP models pre-loaded'))
-  .catch((e) => console.log('[Service Worker] CLIP warmup skipped:', e));
+  .then(() => console.log('[Service Worker] ✅ SigLIP2 models pre-loaded'))
+  .catch((e) => console.log('[Service Worker] model warmup skipped:', e));
+
+// ── The dashboard's query embeddings (externally_connectable) ──
+// Only EMBED_QUERY, only from the web app's host, answered with only the
+// vector, one inference at a time: see functions/external-messages.
+const externalHost = parseAllowedHost(process.env.PLASMO_PUBLIC_CLERK_SYNC_HOST);
+const embedExternalQuery = createExternalEmbedder(embedText);
+
+chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  handleExternalMessage(msg, sender, { allowed: externalHost, embed: embedExternalQuery })
+    .then((res) => sendResponse(res ?? NOT_ALLOWED))
+    .catch(() => sendResponse(NOT_ALLOWED));
+  return true; // answered asynchronously
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   ;(async () => {
