@@ -2,38 +2,11 @@ import { useMemo } from "react"
 import Image from "next/image"
 import LinkPreviewHover from "./LinkPreviewHover"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { LinkPreview } from "@/lib/capture-feed"
+import { formatHostname } from "@/lib/utils"
 
-type LinkPreview = {
-  _id: string
-  canonicalUrl: string
-  originalUrl: string
-  domain: string
-  siteName?: string
-  faviconUrl?: string
-  title?: string
-  description?: string
-  imageUrl?: string
-  contentType?: string
-  status?: number
-  author?: string
-  publishedDate?: string
-  modifiedDate?: string
-  keywords?: string[]
-  themeColor?: string
-  articleSection?: string
-  articleTag?: string[]
-  videoDuration?: string
-  videoUrl?: string
-  productPrice?: string
-  productCurrency?: string
-  productAvailability?: string
-  productRating?: string
-  twitterCard?: string
-  twitterSite?: string
-  twitterCreator?: string
-}
-
-type LinkItem = {
+/** A link capture as the list shows it; `preview` comes with the row (lib/capture-feed LinkPreview). */
+export type LinkItem = {
   _id: string
   kind: "link"
   href: string
@@ -44,7 +17,7 @@ type LinkItem = {
   category?: string
   tags?: string[]
   note?: string
-  preview?: LinkPreview
+  preview?: LinkPreview | null
 }
 
 interface LinkListProps {
@@ -53,15 +26,6 @@ interface LinkListProps {
 
 export default function LinkList({ items }: LinkListProps) {
   const safeItems = useMemo(() => items ?? [], [items])
-  const formatHostname = (href?: string) => {
-    try {
-      if (!href) return ""
-      const u = new URL(href)
-      return u.hostname.replace(/^www\./, "")
-    } catch {
-      return href || ""
-    }
-  }
 
   const getTitle = (item: LinkItem) => {
     return item.preview?.title || item.title || item.text || formatHostname(item.href)
@@ -101,6 +65,7 @@ export default function LinkList({ items }: LinkListProps) {
                         height={14}
                         className="rounded"
                         unoptimized
+                        referrerPolicy="no-referrer"
                       />
                     )}
                     <span className="truncate">{getDomain(item)}</span>

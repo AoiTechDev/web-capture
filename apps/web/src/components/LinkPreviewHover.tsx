@@ -5,37 +5,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-
-type LinkPreview = {
-  _id: string
-  canonicalUrl: string
-  originalUrl: string
-  domain: string
-  siteName?: string
-  faviconUrl?: string
-  title?: string
-  description?: string
-  imageUrl?: string
-  contentType?: string
-  status?: number
-  author?: string
-  publishedDate?: string
-  keywords?: string[]
-}
-
-type LinkItem = {
-  _id: string
-  kind: "link"
-  href: string
-  text?: string
-  url: string
-  title?: string
-  timestamp: number
-  category?: string
-  tags?: string[]
-  note?: string
-  preview?: LinkPreview
-}
+import type { LinkItem } from "./LinkList"
+import { formatHostname } from "@/lib/utils"
 
 interface LinkPreviewHoverProps {
   item: LinkItem
@@ -48,7 +19,7 @@ export default function LinkPreviewHover({
 }: LinkPreviewHoverProps) {
   const preview = item.preview
 
-  const formatDate = (dateStr?: string) => {
+  const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return null
     try {
       const d = new Date(dateStr)
@@ -64,7 +35,7 @@ export default function LinkPreviewHover({
   }
 
   const getDomain = () => {
-    return preview?.domain || new URL(item.href).hostname.replace(/^www\./, "")
+    return preview?.domain || formatHostname(item.href)
   }
 
   const getTitle = () => {
@@ -79,7 +50,7 @@ export default function LinkPreviewHover({
       preview.contentType ||
       preview.author ||
       preview.publishedDate ||
-      preview.keywords)
+      (preview.keywords?.length ?? 0) > 0)
 
   if (!hasPreviewData) {
     return <>{children}</>
@@ -106,6 +77,7 @@ export default function LinkPreviewHover({
                 fill
                 className="object-cover"
                 unoptimized
+                referrerPolicy="no-referrer"
               />
             </div>
           )}
@@ -119,6 +91,7 @@ export default function LinkPreviewHover({
                   height={14}
                   className="rounded"
                   unoptimized
+                  referrerPolicy="no-referrer"
                 />
               )}
               <span className="truncate">{preview.siteName || getDomain()}</span>

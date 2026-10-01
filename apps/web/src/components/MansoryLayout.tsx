@@ -2,7 +2,7 @@
 
 import { useRef, useState, useMemo, useLayoutEffect } from "react";
 import Image from "next/image";
-import { Trash, Maximize2, Download, RotateCw } from "lucide-react";
+import { Maximize2, Download, RotateCw } from "lucide-react";
 
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import { useMutation } from "convex/react";
@@ -11,6 +11,7 @@ import { useMaximizeImageStore } from "@/store/maximize-image-store";
 import { useRemovedCapturesStore } from "@/store/removed-captures-store";
 import { preloadImage } from "@/utils/image-preloader";
 import type { CaptureDetails } from "./DesignDnaPanel";
+import ConfirmDeleteButton from "./ConfirmDeleteButton";
 
 export interface MasonryItem extends CaptureDetails {
   _id: string;
@@ -346,24 +347,18 @@ export default function MasonryLayout({ items, onPickColor }: MasonryLayoutProps
                   <Download className="h-3.5 w-3.5" />
                 </button>
 
-                <button
-                  type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--bg)]/90 text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:border-[var(--danger)] hover:text-[var(--danger)]"
-                  title="Delete"
-                  aria-label="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // The server deletes the capture's own file; it never
-                    // takes a storage id from the client.
-                    deleteById({
-                      docId: item._id as Id<"captures">,
-                    })
-                      .then(() => markRemoved(item._id))
-                      .catch((err) => console.error("Failed to delete capture:", err));
+                <ConfirmDeleteButton
+                  onDelete={async () => {
+                    try {
+                      // The server deletes the capture's own file; it never
+                      // takes a storage id from the client.
+                      await deleteById({ docId: item._id as Id<"captures"> });
+                      markRemoved(item._id);
+                    } catch (err) {
+                      console.error("Failed to delete capture:", err);
+                    }
                   }}
-                >
-                  <Trash className="h-3.5 w-3.5" />
-                </button>
+                />
               </div>
 
               <div

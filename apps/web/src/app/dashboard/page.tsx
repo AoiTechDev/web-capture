@@ -4,7 +4,9 @@ import MaximizedText from "@/components/MaximizedText";
 import CaptureGrid from "@/components/CaptureGrid";
 import { FilterPanel, TypeChips } from "@/components/FilterBar";
 import { MasonrySkeleton } from "@/components/Skeletons";
+import { useQuery } from "convex/react";
 import { useCachedQuery } from "@/hooks/useStableQuery";
+import { useSessionOptions } from "@/hooks/useSessionOptions";
 import { useQueryEmbedding } from "@/hooks/useQueryEmbedding";
 import { useFilterParams } from "@/hooks/useFilterParams";
 import { useCaptureFeed } from "@/hooks/useCaptureFeed";
@@ -128,17 +130,26 @@ function Dashboard() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const { data: counts } = useCachedQuery(api.captures.countsByKind, {});
-  const { data: sessionData } = useCachedQuery(api.sessions.listSessions, { limit: 100, thumbsPerSession: 0 });
-  const sessions = sessionData?.sessions;
+  // Null (shown as "—") until the backend's counters cover the whole library.
+  const counts = useCachedQuery(api.captures.countsByKind, {}).data ?? undefined;
+  // The picker's list, a page at a time; fetched only while the panel is open.
+  const sessionOptions = useSessionOptions(panelOpen);
+  const { sessions } = sessionOptions;
 
   // The URL's session must be one of the user's before it is sent: the
-  // backend's id validator throws on an id from another table. Unknown ones
-  // (garbage, deleted, or older than the 100 listed) are dropped from the URL.
-  const sessionOk = !filters.session || !!sessions?.some((s) => s.id === filters.session);
+  // backend's id validator throws on an id from another table. One
+  // owner-checked read settles it, however old the session; unknown ones
+  // (garbage, another table's id, deleted, someone else's) come back null
+  // and are dropped from the URL. One picked from the list is known good.
+  const sessionCheck = useQuery(
+    api.sessions.getSessionOption,
+    filters.session ? { id: filters.session } : "skip"
+  );
+  const sessionOk =
+    !filters.session || !!sessionCheck || !!sessions?.some((s) => s.id === filters.session);
   useEffect(() => {
-    if (filters.session && sessions && !sessionOk) setFilters({ session: null });
-  }, [filters.session, sessions, sessionOk, setFilters]);
+    if (filters.session && sessionCheck === null) setFilters({ session: null });
+  }, [filters.session, sessionCheck, setFilters]);
 
   // Date presets start at local midnight, so the arguments (and the queries
   // they key) change once a day, not on every render.
@@ -232,7 +243,8 @@ function Dashboard() {
           id="filter-panel"
           filters={filters}
           setFilters={setFilters}
-          sessions={sessions}
+          sessions={sessionOptions}
+          selectedSession={sessionCheck ?? null}
         />
       )}
 

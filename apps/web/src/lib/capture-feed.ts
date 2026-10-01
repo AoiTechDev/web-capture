@@ -15,6 +15,8 @@ export type BrowseArgs = FunctionArgs<typeof api.browse.browseCaptures>;
 export type FeedFilterArgs = Omit<BrowseArgs, "limit" | "cursor">;
 export type QueryVectors = Pick<SearchArgs, "vector" | "textVector">;
 export type { CaptureRow };
+/** A link row's preview (title, description, favicon, image), hydrated by the backend. */
+export type LinkPreview = NonNullable<CaptureRow["preview"]>;
 
 /** Results per page. */
 export const PAGE_SIZE = 40;

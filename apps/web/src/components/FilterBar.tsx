@@ -19,6 +19,15 @@ type SetFilters = (patch: Partial<CaptureFilters>) => void;
 
 export type SessionOption = { id: string; displayName: string; startedAt: number };
 
+/** The picker's list as useSessionOptions pages it. */
+export type SessionList = {
+  /** Undefined until the first page is in. */
+  sessions: readonly SessionOption[] | undefined;
+  canLoadMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
+};
+
 /** A toggle chip: a real button, with its state announced by aria-pressed. */
 function ToggleChip({
   pressed,
@@ -221,15 +230,23 @@ export function FilterPanel({
   id,
   filters,
   setFilters,
-  sessions,
+  sessions: list,
+  selectedSession,
 }: {
   id: string;
   filters: CaptureFilters;
   setFilters: SetFilters;
-  sessions: readonly SessionOption[] | undefined;
+  sessions: SessionList;
+  /** The URL's session once checked, so it shows even when older than the pages loaded. */
+  selectedSession: SessionOption | null;
 }) {
   const sessionId = useId();
-  const knownSession = !filters.session || (sessions ?? []).some((s) => s.id === filters.session);
+  const sessions = list.sessions;
+  const listed = sessions ?? [];
+  const selected = filters.session
+    ? (listed.find((s) => s.id === filters.session) ?? (selectedSession?.id === filters.session ? selectedSession : null))
+    : null;
+  const options = selected && !listed.some((s) => s.id === selected.id) ? [selected, ...listed] : listed;
 
   return (
     <section
@@ -245,17 +262,27 @@ export function FilterPanel({
           <select
             id={sessionId}
             className="input-field"
-            value={knownSession ? (filters.session ?? "") : ""}
+            value={selected?.id ?? ""}
             disabled={!sessions}
             onChange={(e) => setFilters({ session: e.target.value || null })}
           >
             <option value="">All sessions</option>
-            {(sessions ?? []).map((s) => (
+            {options.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.displayName} · {new Date(s.startedAt).toLocaleDateString()}
               </option>
             ))}
           </select>
+          {(list.canLoadMore || list.loadingMore) && (
+            <button
+              type="button"
+              className="mt-1.5 text-[12px] text-[var(--text-muted)] transition-colors hover:text-[var(--text)] disabled:opacity-60"
+              disabled={list.loadingMore}
+              onClick={list.loadMore}
+            >
+              {list.loadingMore ? "Loading…" : "Show older sessions"}
+            </button>
+          )}
         </div>
         <DateFilter filters={filters} setFilters={setFilters} />
         <ColorFilter filters={filters} setFilters={setFilters} />

@@ -17,7 +17,6 @@ interface TextWrapLayoutProps {
 }
 
 function TextWrapLayout({ items }: TextWrapLayoutProps) {
-  console.log(items)
   const safeItems = useMemo(() => items ?? [], [items]);
   const getHostname = (rawUrl?: string) => {
     try {

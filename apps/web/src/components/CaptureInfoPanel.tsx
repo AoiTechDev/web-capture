@@ -1,12 +1,14 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, Trash, X } from "lucide-react";
 import { api } from "../../../../packages/backend/convex/_generated/api";
 import type { Id } from "../../../../packages/backend/convex/_generated/dataModel";
 import { addTags, MAX_USER_TAGS, removeTag } from "@/lib/tags";
 import { useRemovedCapturesStore } from "@/store/removed-captures-store";
+import { CONFIRM_TIMEOUT_MS, useArmedConfirm } from "@/hooks/useArmedConfirm";
+import { useSessionOptions } from "@/hooks/useSessionOptions";
 
 /** The open capture as the panel shows it: the live document where it has loaded. */
 export type CaptureInfo = {
@@ -133,13 +135,13 @@ function TagEditor({ captureId, tags }: { captureId: string; tags: string[] }) {
 
 /** Moves the capture to another of the user's sessions, or out of any. */
 function SessionPicker({ info }: { info: CaptureInfo }) {
-  const sessions = useQuery(api.sessions.listSessions, { limit: 100, thumbsPerSession: 0 });
+  const { sessions, canLoadMore, loadingMore, loadMore } = useSessionOptions();
   const setCaptureSession = useMutation(api.sessions.setCaptureSession);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
   const selectId = useId();
-  const list = sessions?.sessions ?? [];
-  // A session beyond the listed 100 still shows as the current choice.
+  const list = sessions ?? [];
+  // A session older than the pages loaded still shows as the current choice.
   const missing = info.sessionId && !list.some((s) => s.id === info.sessionId);
 
   return (
@@ -173,38 +175,86 @@ function SessionPicker({ info }: { info: CaptureInfo }) {
           </option>
         ))}
       </select>
+      {(canLoadMore || loadingMore) && (
+        <button
+          type="button"
+          className="mt-1.5 text-[12px] text-[var(--text-muted)] transition-colors hover:text-[var(--text)] disabled:opacity-60"
+          disabled={loadingMore}
+          onClick={loadMore}
+        >
+          {loadingMore ? "Loading…" : "Show older sessions"}
+        </button>
+      )}
       {error && <p className="mt-1.5 text-[12px] text-[var(--danger)]">Couldn&apos;t move the capture. Try again.</p>}
     </Section>
   );
 }
 
-/** Delete, behind a second click. */
+/**
+ * Delete, behind a second click (useArmedConfirm, as on the grid's cards):
+ * the confirm disarms after a few seconds, when focus leaves it, or on
+ * Escape or Cancel.
+ */
 function DeleteCapture({ captureId, onDeleted }: { captureId: string; onDeleted: () => void }) {
   const deleteById = useMutation(api.upload.deleteById);
   const markRemoved = useRemovedCapturesStore((s) => s.markRemoved);
-  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const { armed, arm, disarm } = useArmedConfirm(CONFIRM_TIMEOUT_MS, busy);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const wasArmed = useRef(false);
+  // Focus moves into the confirm (onto Cancel, the safe choice), so leaving
+  // it with the keyboard or pressing Escape disarms it; when the confirm
+  // closes with focus still in it (Cancel, Escape, the timeout), focus goes
+  // back to the Delete button rather than to the page.
+  useEffect(() => {
+    if (armed) cancelRef.current?.focus();
+    else if (wasArmed.current && (!document.activeElement || document.activeElement === document.body)) {
+      deleteRef.current?.focus();
+    }
+    wasArmed.current = armed;
+  }, [armed]);
+  const failed = error && <p className="mt-1.5 text-[12px] text-[var(--danger)]">Couldn&apos;t delete. Try again.</p>;
 
-  if (!confirming) {
+  if (!armed) {
     return (
-      <button
-        type="button"
-        className="btn-secondary w-full hover:border-[var(--danger)] hover:text-[var(--danger)]"
-        onClick={() => setConfirming(true)}
-      >
-        <Trash className="h-3.5 w-3.5" />
-        Delete capture
-      </button>
+      <>
+        <button
+          ref={deleteRef}
+          type="button"
+          className="btn-secondary w-full hover:border-[var(--danger)] hover:text-[var(--danger)]"
+          onClick={arm}
+        >
+          <Trash className="h-3.5 w-3.5" />
+          Delete capture
+        </button>
+        {failed}
+      </>
     );
   }
   return (
-    <div role="group" aria-label="Confirm delete">
+    <div
+      role="group"
+      aria-label="Confirm delete"
+      // Keep focus where it is on a mouse press: Safari blurs the focused
+      // Cancel (relatedTarget null) without focusing the pressed button, which
+      // would disarm the confirm before the click on Delete lands.
+      onMouseDown={(e) => e.preventDefault()}
+      onBlur={(e) => {
+        if (!busy && !e.currentTarget.contains(e.relatedTarget as Node | null)) disarm();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) {
+          e.stopPropagation();
+          disarm();
+        }
+      }}
+    >
       <p className="mb-2 text-[12px] text-[var(--text-muted)]">Delete this capture for good?</p>
       <div className="flex gap-2">
         <button
           type="button"
-          autoFocus
           disabled={busy}
           className="btn-secondary flex-1 border-[var(--danger)] text-[var(--danger)]"
           onClick={async () => {
@@ -224,11 +274,11 @@ function DeleteCapture({ captureId, onDeleted }: { captureId: string; onDeleted:
         >
           {busy ? "Deleting…" : "Delete"}
         </button>
-        <button type="button" className="btn-secondary flex-1" disabled={busy} onClick={() => setConfirming(false)}>
+        <button ref={cancelRef} type="button" className="btn-secondary flex-1" disabled={busy} onClick={disarm}>
           Cancel
         </button>
       </div>
-      {error && <p className="mt-1.5 text-[12px] text-[var(--danger)]">Couldn&apos;t delete. Try again.</p>}
+      {failed}
     </div>
   );
 }

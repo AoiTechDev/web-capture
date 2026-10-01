@@ -3,24 +3,13 @@
 import { useEffect, useMemo, useState, type ReactNode, type RefObject } from "react";
 import MasonryLayout, { type MasonryItem } from "@/components/MansoryLayout";
 import TextWrapLayout from "@/components/TextWrapLayout";
-import LinkList from "@/components/LinkList";
+import LinkList, { type LinkItem } from "@/components/LinkList";
 import { MasonrySkeleton, ListSkeleton } from "@/components/Skeletons";
 import type { CaptureDetails } from "@/components/DesignDnaPanel";
 import { partitionByLayout, type CaptureRow } from "@/lib/capture-feed";
 import type { CaptureFeed } from "@/hooks/useCaptureFeed";
 
 type TextItem = { _id: string; kind: "text"; content: string; url: string; timestamp: number; category?: string };
-type LinkItem = {
-  _id: string;
-  kind: "link";
-  href: string;
-  text?: string;
-  url: string;
-  title?: string;
-  timestamp: number;
-  category?: string;
-  tags?: string[];
-};
 
 function toMasonryItem(r: CaptureRow): MasonryItem {
   return {
@@ -67,6 +56,7 @@ const toLinkItem = (r: CaptureRow): LinkItem => ({
   timestamp: r.timestamp,
   category: r.category ?? undefined,
   tags: r.tags,
+  preview: r.preview,
 });
 
 function SectionTitle({ children }: { children: ReactNode }) {
