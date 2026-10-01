@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
+import { contrastCheckValidator, designTokensValidator } from "./lib/design_system_validators";
 
 /**
  * Where a capture is in the enrichment pipeline. New captures start as
@@ -447,6 +448,32 @@ export default defineSchema({
     /** When the walk last ran a batch (or started), to spot one that stalled. */
     lastBatchAt: v.optional(v.float64()),
   }),
+  /**
+   * The design system generated from one session (design_systems.ts): at
+   * most one per session, overwritten by regenerating. `tokens` is what the
+   * user sees and edits; `generatedTokens` keeps the generator's output for
+   * "reset to generated".
+   */
+  designSystems: defineTable({
+    userId: v.string(),
+    sessionId: v.id("sessions"),
+    tokens: designTokensValidator,
+    generatedTokens: designTokensValidator,
+    /** checkContrast of `tokens`, recomputed on every save (never auto-fixed). */
+    contrast: v.array(contrastCheckValidator),
+    /** Template summary of the generated tokens (lib/design_system/describe). */
+    description: v.string(),
+    /** What the generator corrected or guessed. */
+    notes: v.array(v.string()),
+    /** Saved by the user since it was generated. */
+    edited: v.boolean(),
+    /** Captures the tokens were generated from. */
+    sourceCount: v.number(),
+    /** Their sites, most frequent first (capped). */
+    sourceDomains: v.array(v.string()),
+    generatedAt: v.float64(),
+    updatedAt: v.float64(),
+  }).index("by_user_session", ["userId", "sessionId"]),
   tags: defineTable({
     name: v.string(),
     userId: v.string(),
