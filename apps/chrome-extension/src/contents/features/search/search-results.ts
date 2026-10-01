@@ -156,7 +156,8 @@ export function renderSearchResults(
       sub.textContent = domain + desc
     } else {
       // Surfacing the match strength makes a bad ranking visible instead of
-      // looking like an arbitrary result set.
+      // looking like an arbitrary result set. `score` is already a 0-1 display
+      // match calibrated per model (lib/ai_config matchScore), not a raw cosine.
       const pct = typeof item.score === 'number' ? `${Math.round(item.score * 100)}% match` : ''
       sub.textContent = [host, item.category, pct].filter(Boolean).join(' · ')
     }

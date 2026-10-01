@@ -19,6 +19,10 @@
     "overrides": {
       "braces": "^3.0.3",
       "msgpackr": "^1.10.1"
+    },
+    "patchedDependencies": {
+      "@huggingface/transformers@4.3.0": "patches/@huggingface__transformers@4.3.0.patch",
+      "onnxruntime-web@1.31.0-dev.20260914-8d85527a0": "patches/onnxruntime-web@1.31.0-dev.20260914-8d85527a0.patch"
     }
   },
   "packageManager": "pnpm@10.16.1",

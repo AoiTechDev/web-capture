@@ -1,5 +1,6 @@
 /**
- * Local embedding generation using CLIP via an offscreen document.
+ * Local embedding generation with SigLIP2 (lib/ai_config LOCAL_MODEL_ID) via
+ * an offscreen document.
  *
  * Service workers can't run WASM threads, so the actual Transformers.js
  * inference runs in an offscreen document (tabs/offscreen.html) which has
@@ -35,7 +36,7 @@ async function ensureOffscreen(): Promise<void> {
     _creating = (chrome.offscreen as any).createDocument({
       url: OFFSCREEN_URL,
       reasons: ["WORKERS"],
-      justification: "Run CLIP ML model for content embedding",
+      justification: "Run the local ML model for content embedding",
     })
     await _creating
   } catch (e: any) {
@@ -75,7 +76,7 @@ async function sendToOffscreen(
 /* ─── Public API (same interface as before) ────────────────────── */
 
 /**
- * Embed a text string using CLIP's text encoder (runs in offscreen doc).
+ * Embed a text string with the model's text encoder (runs in offscreen doc).
  * Works for text captures, code, link descriptions, and search queries.
  * Returns a LOCAL_EMBEDDING_DIM vector (same space as embedImageFromUrl).
  */
@@ -86,7 +87,7 @@ export async function embedText(text: string): Promise<number[]> {
 }
 
 /**
- * Embed an image from a URL using CLIP's vision encoder (runs in offscreen doc).
+ * Embed an image from a URL with the model's vision encoder (runs in offscreen doc).
  * Returns a LOCAL_EMBEDDING_DIM vector (same space as embedText).
  */
 export async function embedImageFromUrl(imageUrl: string): Promise<number[]> {
@@ -96,36 +97,11 @@ export async function embedImageFromUrl(imageUrl: string): Promise<number[]> {
 }
 
 /**
- * Embed an image from a Blob.
- * Converts blob to data-URL and sends to offscreen doc for processing.
- */
-export async function embedImageFromBlob(blob: Blob): Promise<number[]> {
-  // Chrome messages only support JSON — convert blob to data URL
-  const arrayBuffer = await blob.arrayBuffer()
-  const bytes = new Uint8Array(arrayBuffer)
-  let binary = ""
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]!)
-  }
-  const base64 = btoa(binary)
-  const dataUrl = `data:${blob.type || "image/png"};base64,${base64}`
-
-  return embedImageFromUrl(dataUrl)
-}
-
-/**
- * Pre-load CLIP models in the offscreen document.
- * The first call downloads the model (~150 MB, cached afterwards).
+ * Pre-load the models in the offscreen document.
+ * The first call downloads the model (~350 MB: text q8 283 MB + vision q4
+ * 64 MB, cached afterwards).
  */
 export async function warmup(): Promise<void> {
   const resp = await sendToOffscreen({ type: "WARMUP" })
   if (resp?.error) throw new Error(resp.error)
-}
-
-/**
- * Check if offscreen doc + models are ready.
- * (Always returns false synchronously — use warmup() to wait.)
- */
-export function isReady(): boolean {
-  return false
 }

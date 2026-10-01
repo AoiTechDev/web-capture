@@ -2,8 +2,8 @@ import { getFunctionName } from "convex/server"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 
 vi.mock("~background/functions/local-embeddings", () => ({
-  embedText: vi.fn(async () => Array.from({ length: 512 }, () => 0.1)),
-  embedImageFromUrl: vi.fn(async () => Array.from({ length: 512 }, () => 0.1)),
+  embedText: vi.fn(async () => Array.from({ length: 768 }, () => 0.1)),
+  embedImageFromUrl: vi.fn(async () => Array.from({ length: 768 }, () => 0.1)),
 }))
 vi.mock("~background/functions/auto-tag", () => ({
   classifyImage: vi.fn(async () => ({ aiCategory: "hero", aiStyle: ["dark"], aiTags: ["headline"], debug: { category: [] } })),

@@ -94,7 +94,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 
 /**
  * Embed a claimed capture and, for images, tag it. Images embed their grid
- * thumbnail when there is one (CLIP sees 224px anyway); text, link and code
+ * thumbnail when there is one (the model sees 384px anyway); text, link and code
  * captures embed their text with the text encoder, into a separate index.
  */
 export async function analyzeCapture(item: ClaimedItem): Promise<AnalysisResult> {

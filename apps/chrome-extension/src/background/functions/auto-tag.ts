@@ -1,16 +1,18 @@
 /**
- * Zero-shot image tagging with the local CLIP model, mapped to the spec's
- * taxonomy: one `aiCategory`, 1-4 `aiStyle` labels and 5-10 `aiTags`.
+ * Zero-shot image tagging with the local model (SigLIP2), mapped to the
+ * spec's taxonomy: one `aiCategory`, 1-4 `aiStyle` labels and 5-10 `aiTags`.
  *
- * CLIP embeds text and images into one space, so an image is classified
+ * The model embeds text and images into one space, so an image is classified
  * against arbitrary labels with no training and no API call: embed each
  * label's prompts once, then compare the image vector with them. Label
  * vectors are computed on first use and cached in chrome.storage.local.
  *
- * Scores are softmax probabilities over CLIP logits (cosine x 100, CLIP's
- * learned logit scale), not raw cosines: raw cosines sit in a narrow band
- * (~0.15-0.35) that shifts with prompt wording, while probabilities within a
- * label set are comparable across images.
+ * Scores are softmax probabilities over the model's logits (SigLIP's learned
+ * scale x cosine; its bias is the same for every label, so it cancels), not
+ * raw cosines: raw cosines sit in a narrow band (~0.05-0.17 for SigLIP2) that
+ * shifts with prompt wording, while probabilities within a label set are
+ * comparable across images. SigLIP's own per-label sigmoid is not used: for
+ * captions like these it rarely leaves ~0.3, so it cannot rank or gate.
  *
  * Everything but `getLabelVectors` / `classifyImage` is pure, for tests.
  */
@@ -19,14 +21,14 @@
 // evaluation, so a lazy import inside a message handler throws NetworkError.
 import { embedText } from "./local-embeddings"
 import { hexToLab } from "../../../../../packages/backend/convex/lib/color"
-import { LOCAL_MODEL_ID } from "../../../../../packages/backend/convex/lib/ai_config"
+import { LOCAL_MODEL_ID, SIGLIP_LOGIT_SCALE } from "../../../../../packages/backend/convex/lib/ai_config"
 import type { AiCategory } from "../../../../../packages/backend/convex/schema"
 
 /* ─── Vocabulary ────────────────────────────────────────────────── */
 
 /**
  * `key` is what gets stored; `prompts` are embedded and averaged (prompt
- * ensembling). Prompts are captions, not bare nouns: CLIP was trained on
+ * ensembling). Prompts are captions, not bare nouns: the model was trained on
  * captions and scores natural phrasing noticeably better.
  */
 export type Label<K extends string = string> = { key: K; prompts: string[] }
@@ -48,7 +50,7 @@ export const CATEGORY_LABELS: Label<Exclude<AiCategory, "other">>[] = [
   { key: "icon", prompts: ["an icon", "a set of user interface icons"] },
 ]
 
-/** Styles CLIP decides. Dark/light are separate: see LUMINANCE_LABELS. */
+/** Styles the model decides. Dark/light are separate: see LUMINANCE_LABELS. */
 export const STYLE_LABELS: Label[] = [
   { key: "minimal", prompts: ["a minimal website design with lots of white space"] },
   { key: "gradient", prompts: ["a design with smooth colorful gradients"] },
@@ -106,10 +108,23 @@ export const TAG_LABELS: Label[] = [
 
 /* ─── Tuning ────────────────────────────────────────────────────── */
 
-/** CLIP's learned logit scale: logits = 100 x cosine. */
-export const LOGIT_SCALE = 100
+/*
+ * Measured on 100 website screenshots (SigLIP2-384, vision q4): best-category
+ * cosine 0.12-0.15 (10th-90th percentile), margin over the runner-up >= 0.1 on
+ * 87%; styles >= 0.2 typically 1-2, tags >= 0.05 typically 3-7. With a logit
+ * scale near CLIP's 100 the probability thresholds carry over unchanged.
+ */
+
+/** SigLIP2's learned logit scale (lib/ai_config): logits = scale x cosine. */
+export const LOGIT_SCALE = SIGLIP_LOGIT_SCALE
 /** Top category must beat the runner-up by this much probability, else "other". */
 export const CATEGORY_MIN_MARGIN = 0.1
+/**
+ * ...and its own cosine must reach this, else "other": softmax always crowns
+ * some label, even for an image unlike every prompt. Below every screenshot
+ * in the benchmark (lowest best-category cosine 0.092).
+ */
+export const CATEGORY_MIN_COSINE = 0.08
 /** Styles (besides dark/light) kept at or above this probability. */
 export const STYLE_MIN_PROB = 0.2
 export const MAX_STYLES = 4
@@ -163,10 +178,10 @@ export function scoreLabels<K extends string>(
   return withCos.map((x, i) => ({ ...x, prob: probs[i]! })).sort((a, b) => b.prob - a.prob)
 }
 
-/** The top category if it clearly beats the runner-up, else "other". */
+/** The top category if it is a plausible match and clearly beats the runner-up, else "other". */
 export function pickCategory(scored: Scored<Exclude<AiCategory, "other">>[]): AiCategory {
   const [best, next] = scored
-  if (!best) return "other"
+  if (!best || best.cos < CATEGORY_MIN_COSINE) return "other"
   return best.prob - (next?.prob ?? 0) >= CATEGORY_MIN_MARGIN ? best.key : "other"
 }
 
@@ -181,7 +196,7 @@ export type ColorHints = {
  * Dark or light from measured colour: the DNA's main background when there
  * is one, else the heaviest palette colour (backgrounds cover the most
  * pixels). Null when there is nothing to measure. Cheaper and more reliable
- * than asking CLIP.
+ * than asking the model.
  */
 export function luminanceStyle(hints: ColorHints): "dark" | "light" | null {
   let lightness: number | null = null
@@ -195,7 +210,7 @@ export function luminanceStyle(hints: ColorHints): "dark" | "light" | null {
   return lightness < DARK_MAX_LIGHTNESS ? "dark" : "light"
 }
 
-/** Luminance first, then CLIP's confident styles; 1 to MAX_STYLES in total. */
+/** Luminance first, then the model's confident styles; 1 to MAX_STYLES in total. */
 export function pickStyles(luminance: "dark" | "light", scored: Scored[]): string[] {
   const rest = scored.filter((s) => s.prob >= STYLE_MIN_PROB).map((s) => s.key)
   return [luminance, ...rest].slice(0, MAX_STYLES)
@@ -254,7 +269,10 @@ export function labelId(group: string, key: string): string {
   return `${group}:${key}`
 }
 
-const CACHE_KEY = "clip_label_vectors_v2"
+/** v4: label prompts are now embedded lowercased (see offscreen embedText). */
+const CACHE_KEY = "label_vectors_v4"
+/** Earlier caches (CLIP, then SigLIP2 with cased prompts); dropped on first load. */
+const STALE_CACHE_KEYS = ["clip_label_vectors_v1", "clip_label_vectors_v2", "label_vectors_v3"]
 
 type LabelCache = { version: string; vectors: Record<string, number[]> }
 
@@ -299,6 +317,7 @@ async function getLabelVectors(): Promise<Record<string, number[]>> {
   if (!_memo) {
     _memo = {}
     try {
+      await chrome.storage.local.remove(STALE_CACHE_KEYS)
       const stored = (await chrome.storage.local.get(CACHE_KEY))?.[CACHE_KEY] as LabelCache | undefined
       if (stored?.version === CACHE_VERSION && stored.vectors) _memo = { ...stored.vectors }
     } catch {

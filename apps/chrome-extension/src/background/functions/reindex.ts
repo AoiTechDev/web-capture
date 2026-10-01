@@ -5,9 +5,9 @@ import { isQueueIdle, kickProcessingQueue, onQueueEvent } from "./processing-que
 
 /**
  * Re-index: queue captures that have no embedding for their kind yet
- * (failed, skipped, or saved before the pipeline) in bounded batches until
- * none remain, letting the processing queue do the work and reporting its
- * progress.
+ * (failed, skipped, or saved before the pipeline) or only a stale one from
+ * an earlier model, in bounded batches until none remain, letting the
+ * processing queue do the work and reporting its progress.
  *
  * Progress counts every capture the queue finishes meanwhile, so a capture
  * saved during a re-index shows up in the numbers too.
@@ -86,13 +86,19 @@ export const runReindex = async ({
   try {
     // Bounded batches until nothing is left. A batch in which nothing got
     // embedded ends the run: whatever is left keeps failing, and queuing it
-    // again would loop forever.
+    // again would loop forever. `ready` captures are scanned a page at a
+    // time; a page with nothing stale on it just moves on to the next.
+    let readyCursor: string | null = null
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const limit = maxItems ? Math.min(BATCH_SIZE, maxItems - processed) : BATCH_SIZE
       if (limit <= 0) break
-      const res = await convex.mutation(api.local_ai.requeueUnindexed, { limit })
+      const res = await convex.mutation(api.local_ai.requeueUnindexed, { limit, readyCursor })
+      readyCursor = res.readyCursor
       remaining = res.requeued + res.remaining
-      if (res.requeued === 0) break
+      if (res.requeued === 0) {
+        if (readyCursor) continue
+        break
+      }
       const embeddedBefore = embedded
       await drainBatch(res.requeued, res.remaining)
       if (embedded === embeddedBefore) break

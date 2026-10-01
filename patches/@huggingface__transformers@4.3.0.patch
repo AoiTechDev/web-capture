@@ -1,0 +1,22 @@
+diff --git a/dist/transformers.web.js b/dist/transformers.web.js
+index 5ac054c..cd59e7a 100644
+--- a/dist/transformers.web.js
++++ b/dist/transformers.web.js
+@@ -8730,15 +8730,8 @@ if (ONNX_ENV) {
+       // @ts-ignore Cannot find name 'ServiceWorkerGlobalScope'.ts(2304)
+       !(typeof ServiceWorkerGlobalScope !== "undefined" && self instanceof ServiceWorkerGlobalScope) && ONNX_ENV.versions?.web && !ONNX_ENV.wasm.wasmPaths
+     ) {
+-      const wasmPathPrefix = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ONNX_ENV.versions.web}/dist/`;
+-      let wasmPathSuffix = ".asyncify";
+-      if (apis.IS_SAFARI_BELOW_26 && !apis.IS_WEBGPU_AVAILABLE) {
+-        wasmPathSuffix = "";
+-      }
+-      ONNX_ENV.wasm.wasmPaths = {
+-        mjs: `${wasmPathPrefix}ort-wasm-simd-threaded${wasmPathSuffix}.mjs`,
+-        wasm: `${wasmPathPrefix}ort-wasm-simd-threaded${wasmPathSuffix}.wasm`
+-      };
++      // Patched (web-capture): no CDN default. MV3 forbids remote code; the
++      // extension sets wasmPaths to its own files before this module loads.
+     }
+     ONNX_ENV.wasm.proxy = false;
+   }
