@@ -1,11 +1,14 @@
 /// <reference types="vite/client" />
 import type { Id } from "../convex/_generated/dataModel";
+import { LOCAL_EMBEDDING_DIM } from "../convex/lib/ai_config";
 import { buildSearchText } from "../convex/lib/search_rank";
 import { makeT, userA, userB } from "./setup";
 
 export type T = ReturnType<typeof makeT>;
 
 export const vec = (n: number, fill = 0.1) => Array.from({ length: n }, () => fill);
+/** The local model's embedding size (lib/ai_config), for vectors the backend must accept. */
+export const DIM = LOCAL_EMBEDDING_DIM;
 
 export async function storeBlob(t: T, text = "png-bytes"): Promise<Id<"_storage">> {
   return await t.run((ctx) => ctx.storage.store(new Blob([text])));
@@ -61,7 +64,7 @@ export async function seedUser(t: T, userId: string, tag = userId) {
       category: "unsorted",
       userId,
       sessionId,
-      localEmbedding: vec(512),
+      localEmbedding: vec(DIM),
       searchText: buildSearchText({ url: "https://page.example" }),
     });
     return { sessionId, previewId, linkId, shotId, storageId };

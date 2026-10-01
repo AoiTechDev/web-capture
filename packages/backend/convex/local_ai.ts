@@ -16,7 +16,7 @@ import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { assertLocalEmbedding } from "./helpers";
 import { aiCategoryValidator } from "./schema";
-import { AI_MAX_ATTEMPTS, AI_STALE_PROCESSING_MS } from "./lib/ai_config";
+import { AI_MAX_ATTEMPTS, AI_STALE_PROCESSING_MS, LOCAL_EMBEDDING_DIM } from "./lib/ai_config";
 import { buildSearchText } from "./lib/search_rank";
 
 /* ---------- helpers ---------- */
@@ -28,10 +28,23 @@ export function isVisualKind(kind: string): boolean {
   return VISUAL_KINDS.has(kind);
 }
 
-/** Whether a capture has the embedding its kind is searched by. */
+/**
+ * Whether a capture has the embedding its kind is searched by, from the
+ * current model. A vector of another size (512-d, from the earlier CLIP
+ * model) is in no index and counts as none.
+ */
 function hasEmbedding(d: any): boolean {
   const vec = isVisualKind(d.kind) ? d.localEmbedding : d.textEmbedding;
-  return Array.isArray(vec) && vec.length > 0;
+  return Array.isArray(vec) && vec.length === LOCAL_EMBEDDING_DIM;
+}
+
+/** Unsets whichever vector fields hold a stale (wrong-size) vector. */
+function staleVectorPatch(d: any): { localEmbedding?: undefined; textEmbedding?: undefined } {
+  const stale = (vec: unknown) => Array.isArray(vec) && vec.length !== LOCAL_EMBEDDING_DIM;
+  return {
+    ...(stale(d.localEmbedding) ? { localEmbedding: undefined } : {}),
+    ...(stale(d.textEmbedding) ? { textEmbedding: undefined } : {}),
+  };
 }
 
 const MAX_STYLES = 4;
@@ -176,7 +189,7 @@ export const claimCapture = mutation({
         id: doc._id as Id<"captures">,
         kind: doc.kind as string,
         visual,
-        /** Grid thumbnail; embedding it is cheaper and CLIP resizes to 224px anyway. */
+        /** Grid thumbnail; embedding it is cheaper and the model resizes to its own input size anyway. */
         thumbUrl,
         imageUrl: storageUrl ?? (visual ? doc.src || null : null),
         text: visual ? null : embeddableText(doc),
@@ -318,11 +331,18 @@ export const recoverStaleProcessing = mutation({
  * last, so a re-index reaches untried captures before retrying failures.
  */
 const UNINDEXED_STATUSES = [undefined, "skipped", "failed"] as const;
-/** Rows read per status bucket; bounds every scan below. */
+/** Rows read per status bucket (and per page of `ready`); bounds every scan below. */
 const UNINDEXED_SCAN = 400;
 
-/** The caller's unindexed captures, bounded; `capped` when a bucket was cut off. */
-async function findUnindexed(ctx: QueryCtx, userId: string) {
+/**
+ * The caller's unindexed captures, bounded; `capped` when a bucket was cut off.
+ *
+ * `ready` captures are included when their vector is stale (another model's
+ * size): they are re-embedded like any other. Being the bulk of a library,
+ * `ready` is read a page at a time from `readyCursor`; the page's
+ * `continueCursor` is null once the last page has been read.
+ */
+async function findUnindexed(ctx: QueryCtx, userId: string, readyCursor: string | null = null) {
   const found: Doc<"captures">[] = [];
   let capped = false;
   for (const status of UNINDEXED_STATUSES) {
@@ -333,24 +353,33 @@ async function findUnindexed(ctx: QueryCtx, userId: string) {
     if (rows.length === UNINDEXED_SCAN) capped = true;
     found.push(...rows.filter((d) => !hasEmbedding(d)));
   }
-  return { found, capped };
+  const ready = await ctx.db
+    .query("captures")
+    .withIndex("by_user_status", (q) => q.eq("userId", userId).eq("status", "ready"))
+    .paginate({ cursor: readyCursor, numItems: UNINDEXED_SCAN });
+  if (!ready.isDone) capped = true;
+  found.push(...ready.page.filter((d) => !hasEmbedding(d)));
+  return { found, capped, continueCursor: ready.isDone ? null : ready.continueCursor };
 }
 
 /**
  * Queue one bounded batch of captures that are not searchable yet (no
- * embedding for their kind, not already queued). The popup's re-index calls
- * this repeatedly until `remaining` is 0; the queue does the actual work.
+ * embedding for their kind, or a stale one; not already queued). Stale
+ * vectors are unset, so nothing searches them meanwhile. The popup's
+ * re-index calls this repeatedly, passing `readyCursor` back, until
+ * `remaining` is 0 and `readyCursor` is null; the queue does the actual work.
  */
 export const requeueUnindexed = mutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), readyCursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { limit, readyCursor }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
     const take = Math.max(1, Math.min(200, limit ?? 100));
-    const { found, capped } = await findUnindexed(ctx, identity.subject);
+    const { found, capped, continueCursor } = await findUnindexed(ctx, identity.subject, readyCursor ?? null);
     const batch = found.slice(0, take);
     for (const doc of batch) {
       await ctx.db.patch(doc._id, {
+        ...staleVectorPatch(doc),
         status: "pending",
         aiAttempts: 0,
         error: undefined,
@@ -358,7 +387,15 @@ export const requeueUnindexed = mutation({
         aiClaim: undefined,
       });
     }
-    return { requeued: batch.length, remaining: found.length - batch.length, capped };
+    const remaining = found.length - batch.length;
+    return {
+      requeued: batch.length,
+      remaining,
+      capped,
+      // Move past this page of `ready` only once all of it was queued;
+      // otherwise the next call reads it again (minus what left the page).
+      readyCursor: remaining === 0 ? continueCursor : (readyCursor ?? null),
+    };
   },
 });
 

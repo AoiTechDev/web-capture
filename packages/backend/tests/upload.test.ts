@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
-import { makeT, seedAB, seedUser, storageExists, storeBlob, userA, userB, vec } from "./fixtures";
+import { makeT, seedAB, seedUser, storageExists, storeBlob, userA, userB, vec, DIM } from "./fixtures";
 
 const baseText = { kind: "text" as const, content: "hello", url: "https://p.example", timestamp: 1 };
 
@@ -117,7 +117,7 @@ describe("upload.uploadCapture", () => {
     const textId = await t.withIdentity(userA).mutation(api.upload.uploadCapture, {
       capture: {
         ...baseText,
-        textEmbedding: vec(512),
+        textEmbedding: vec(DIM),
         aiCategory: "hero",
         aiStyle: ["dark"],
         aiTags: ["forged"],

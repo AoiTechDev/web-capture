@@ -5,7 +5,7 @@ import { api, internal } from "./_generated/api";
 import { assertLocalEmbedding } from "./helpers";
 import { isVisualKind } from "./local_ai";
 import { aiCategoryValidator } from "./schema";
-import { SEARCH_TUNING } from "./lib/ai_config";
+import { MATCH_DISPLAY_BANDS, matchScore, SEARCH_TUNING } from "./lib/ai_config";
 import { keywordScore, rrfFuse, tokenize, type FusedHit, type KeywordDoc, type RankedHit } from "./lib/search_rank";
 
 declare const process: any;
@@ -59,14 +59,6 @@ async function toRow(ctx: QueryCtx, d: any) {
 }
 
 type SearchRow = Awaited<ReturnType<typeof toRow>>;
-
-/** Highest cosine among a hit's vector sources; null when only keywords found it. */
-function bestVectorScore(f: FusedHit): number | null {
-  const scores = [f.sources.image?.score, f.sources.text?.score].filter(
-    (x): x is number => typeof x === "number"
-  );
-  return scores.length ? Number(Math.max(...scores).toFixed(4)) : null;
-}
 
 /**
  * Substring search over one user's captures, as a plain reactive query.
@@ -125,11 +117,32 @@ const MAX_KEYWORD_CANDIDATES = 100;
 /** Convex full-text search accepts at most 16 terms. */
 const MAX_QUERY_TERMS = 16;
 
+/**
+ * One space's vector hits, minus the vector-only ones too weak to show (see
+ * SEARCH_TUNING `imageRelativeMargin`). A hit the keyword search also found
+ * is kept as is. Any other must be above the space's display band low end
+ * (so it shows a match above 0%) and within `margin` of the best cosine in
+ * the space. Order is preserved.
+ */
+export function admitVectorOnly(
+  hits: RankedHit[],
+  keywordIds: ReadonlySet<string>,
+  bandLow: number,
+  margin: number
+): RankedHit[] {
+  if (hits.length === 0) return hits;
+  const best = Math.max(...hits.map((h) => h.score));
+  return hits.filter((h) => keywordIds.has(h.id) || (h.score > bandLow && h.score >= best - margin));
+}
+
 export type SearchResponse = {
   results: Array<
     SearchRow & {
       fusedScore: number;
-      /** Best vector cosine (image or text), for "% match" labels; null for keyword-only hits. */
+      /**
+       * Display match 0-1 from the vector cosines (lib/ai_config `matchScore`),
+       * for "% match" labels; null for keyword-only hits. Raw cosines are in `sources`.
+       */
       score: number | null;
       sources: FusedHit["sources"];
     }
@@ -141,11 +154,14 @@ export type SearchResponse = {
  * Search the caller's captures: image-space vector hits, text-space vector
  * hits and keyword hits, fused with Reciprocal Rank Fusion into one list.
  *
- * `vector` is the query embedded with the image template (lib/ai_config
- * `imageQueryText`) and is matched against image captures; `textVector` is
- * the raw query embedded, matched against text captures. Both are optional:
- * without them (the dashboard, for now) this is keyword search through the
- * same path. Each result carries its rank and score per source in `sources`.
+ * `vector` is the query embedded with the local model's text encoder
+ * (lib/ai_config `imageQueryText`, the raw query for SigLIP2). It is matched
+ * against image captures and, unless `textVector` is given, text captures
+ * too. `textVector` overrides the text-space query (callers built for
+ * CLIP sent a second, raw-query vector). Both are optional: without them this
+ * is keyword search through the same path, which is what the dashboard does
+ * when the extension is not installed. Each result carries its rank and
+ * score per source in `sources`.
  */
 export const searchCaptures = action({
   args: {
@@ -176,6 +192,7 @@ export const searchCaptures = action({
     const minImage = args.minImageScore ?? SEARCH_TUNING.imageMinScore;
     const minText = args.minTextScore ?? SEARCH_TUNING.textMinScore;
     const limit = SEARCH_TUNING.vectorCandidates;
+    const textVector = args.textVector ?? args.vector;
 
     const [imageRaw, textRaw] = await Promise.all([
       args.vector && wantImages
@@ -185,9 +202,9 @@ export const searchCaptures = action({
             filter: (q) => q.eq("userId", userId),
           })
         : Promise.resolve([]),
-      args.textVector && wantText
+      textVector && wantText
         ? ctx.vectorSearch("captures", "by_textEmbedding", {
-            vector: args.textVector,
+            vector: textVector,
             limit,
             filter: (q) => q.eq("userId", userId),
           })
@@ -280,15 +297,23 @@ export const rankAndHydrate = internalQuery({
       }
       return out;
     };
-    const image = await load(imageHits);
-    const text = await load(textHits);
+    const keywordIds = new Set(keywordHits.map((h) => h.id));
+    const imageLoaded = await load(imageHits);
+    const textLoaded = await load(textHits);
+    const image = admitVectorOnly(
+      imageLoaded,
+      keywordIds,
+      MATCH_DISPLAY_BANDS.image[0],
+      SEARCH_TUNING.imageRelativeMargin
+    );
+    const text = admitVectorOnly(textLoaded, keywordIds, MATCH_DISPLAY_BANDS.text[0], SEARCH_TUNING.textRelativeMargin);
 
     const fused = rrfFuse({ image, text, keyword: keywordHits }, SEARCH_TUNING.rrfK).slice(0, limit);
     const results = await Promise.all(
       fused.map(async (f) => ({
         ...(await toRow(ctx, docs.get(f.id))),
         fusedScore: Number(f.fused.toFixed(6)),
-        score: bestVectorScore(f),
+        score: matchScore(f.sources),
         sources: f.sources,
       }))
     );
@@ -299,6 +324,7 @@ export const rankAndHydrate = internalQuery({
         terms,
         imageHits: image.length,
         textHits: text.length,
+        vectorOnlyDropped: imageLoaded.length - image.length + textLoaded.length - text.length,
         keywordHits: keywordHits.length,
         fused: fused.length,
         rrfK: SEARCH_TUNING.rrfK,

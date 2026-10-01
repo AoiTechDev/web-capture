@@ -73,13 +73,13 @@ describe("isFetchableUrl", () => {
 
 describe("assertLocalEmbedding", () => {
   test("dimension constant matches the vector index", () => {
-    expect(LOCAL_EMBEDDING_DIM).toBe(512);
+    expect(LOCAL_EMBEDDING_DIM).toBe(768);
   });
-  test("accepts undefined and exactly 512", () => {
+  test("accepts undefined and exactly 768", () => {
     expect(() => assertLocalEmbedding(undefined)).not.toThrow();
-    expect(() => assertLocalEmbedding(new Array(512).fill(0))).not.toThrow();
+    expect(() => assertLocalEmbedding(new Array(768).fill(0))).not.toThrow();
   });
-  test.each([0, 1, 511, 513, 1536])("rejects length %i", (n) => {
-    expect(() => assertLocalEmbedding(new Array(n).fill(0))).toThrow(/512/);
+  test.each([0, 1, 512, 767, 769, 1536])("rejects length %i", (n) => {
+    expect(() => assertLocalEmbedding(new Array(n).fill(0))).toThrow(/768/);
   });
 });

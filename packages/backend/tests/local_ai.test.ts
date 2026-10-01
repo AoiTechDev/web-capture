@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api } from "../convex/_generated/api";
 import { AI_STALE_PROCESSING_MS } from "../convex/lib/ai_config";
-import { makeT, seedAB, userA, userB, vec } from "./fixtures";
+import { makeT, seedAB, userA, userB, vec, DIM } from "./fixtures";
 
 describe("local_ai.embeddingStats", () => {
   test("rejects anonymous callers", async () => {
@@ -30,7 +30,7 @@ describe("local_ai.embeddingStats", () => {
           url: "u",
           timestamp: i,
           userId: userB.subject,
-          textEmbedding: vec(512),
+          textEmbedding: vec(DIM),
         });
       }
     });
@@ -97,7 +97,7 @@ describe("local_ai processing queue", () => {
     const asB = t.withIdentity(userB);
     await expect(asB.mutation(api.local_ai.claimCapture, { id: a.linkId })).rejects.toThrow(/forbidden/);
     await expect(
-      asB.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(512) })
+      asB.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(DIM) })
     ).rejects.toThrow(/forbidden/);
     await expect(asB.mutation(api.local_ai.failProcessing, { id: a.linkId, claim, error: "x" })).rejects.toThrow(
       /forbidden/
@@ -105,20 +105,20 @@ describe("local_ai processing queue", () => {
     await expect(asB.mutation(api.local_ai.retryProcessing, { captureId: a.linkId })).rejects.toThrow(/forbidden/);
   });
 
-  test.each([0, 511, 513])("complete rejects an embedding of length %i", async (n) => {
+  test.each([0, 512, 767, 769])("complete rejects an embedding of length %i", async (n) => {
     const t = makeT();
     const { a } = await seedAB(t);
     const claim = await claimAs(t, a.linkId);
     await expect(
       t.withIdentity(userA).mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(n) })
-    ).rejects.toThrow(/512/);
+    ).rejects.toThrow(/768/);
   });
 
   test.each([Number.NaN, Number.POSITIVE_INFINITY])("complete rejects a %s component", async (bad) => {
     const t = makeT();
     const { a } = await seedAB(t);
     const claim = await claimAs(t, a.linkId);
-    const textEmbedding = vec(512);
+    const textEmbedding = vec(DIM);
     textEmbedding[7] = bad;
     await expect(
       t.withIdentity(userA).mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding })
@@ -131,14 +131,14 @@ describe("local_ai processing queue", () => {
     const asA = t.withIdentity(userA);
     const linkClaim = await claimAs(t, a.linkId);
     await expect(
-      asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: linkClaim, localEmbedding: vec(512) })
+      asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: linkClaim, localEmbedding: vec(DIM) })
     ).rejects.toThrow(/textEmbedding/);
-    await asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: linkClaim, textEmbedding: vec(512) });
+    await asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: linkClaim, textEmbedding: vec(DIM) });
     const shotClaim = await claimAs(t, a.shotId);
     await asA.mutation(api.local_ai.completeProcessing, {
       id: a.shotId,
       claim: shotClaim,
-      localEmbedding: vec(512, 0.3),
+      localEmbedding: vec(DIM, 0.3),
       aiCategory: "pricing",
       aiStyle: ["Dark", "dark", "minimal"],
       aiTags: ["Landing Page"],
@@ -146,7 +146,7 @@ describe("local_ai processing queue", () => {
     const link = (await t.run((ctx) => ctx.db.get(a.linkId))) as any;
     const shot = (await t.run((ctx) => ctx.db.get(a.shotId))) as any;
     expect(link).toMatchObject({ status: "ready" });
-    expect(link.textEmbedding).toHaveLength(512);
+    expect(link.textEmbedding).toHaveLength(DIM);
     expect(link.localEmbedding).toBeUndefined();
     expect(link.aiClaim).toBeUndefined();
     expect(shot).toMatchObject({
@@ -194,7 +194,7 @@ describe("local_ai processing queue", () => {
     expect(fresh).not.toBe(old);
 
     expect(
-      await asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: old, textEmbedding: vec(512) })
+      await asA.mutation(api.local_ai.completeProcessing, { id: a.linkId, claim: old, textEmbedding: vec(DIM) })
     ).toMatchObject({ ok: false });
     expect(await asA.mutation(api.local_ai.failProcessing, { id: a.linkId, claim: old, error: "x" })).toMatchObject({
       ok: false,
@@ -218,7 +218,7 @@ describe("local_ai processing queue", () => {
     expect(
       await t
         .withIdentity(userA)
-        .mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(512) })
+        .mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(DIM) })
     ).toMatchObject({ ok: false });
   });
 
@@ -240,7 +240,7 @@ describe("local_ai processing queue", () => {
     const claim = await claimAs(t, a.linkId);
     await t
       .withIdentity(userA)
-      .mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(512) });
+      .mutation(api.local_ai.completeProcessing, { id: a.linkId, claim, textEmbedding: vec(DIM) });
     vi.advanceTimersByTime(STALE_MS + 1);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await t.run((ctx) => ctx.db.get(a.linkId))).toMatchObject({ status: "ready" });
@@ -328,12 +328,12 @@ describe("search.searchCaptures", () => {
     expect(r.results).toEqual([]);
   });
 
-  test.each([0, 511, 513])("rejects a query vector of length %i", async (n) => {
+  test.each([0, 512, 767, 769])("rejects a query vector of length %i", async (n) => {
     const t = makeT();
     await seedAB(t);
     await expect(
       t.withIdentity(userA).action(api.search.searchCaptures, { query: "x", vector: vec(n) })
-    ).rejects.toThrow(/512/);
+    ).rejects.toThrow(/768/);
   });
 
   test("keyword-only search returns only the caller's captures, with source info", async () => {
@@ -370,7 +370,7 @@ describe("search.searchCaptures", () => {
     await asA.mutation(api.local_ai.completeProcessing, {
       id: a.shotId,
       claim,
-      localEmbedding: vec(512),
+      localEmbedding: vec(DIM),
       aiCategory: "hero",
       aiTags: ["headline"],
     });
@@ -389,7 +389,8 @@ describe("search.searchCaptures", () => {
 
   // convex-test's in-memory vectorSearch crashes on any row lacking the
   // index's vector field (harness limitation), so each space is tested on a
-  // table holding only rows embedded in that space.
+  // table holding only rows embedded in that space, with `kinds` keeping the
+  // other index out of the search.
   test("image vector hits come from the image index only", async () => {
     const t = makeT();
     const [mine, theirs] = await t.run(async (ctx) => {
@@ -402,18 +403,40 @@ describe("search.searchCaptures", () => {
           url: "u",
           timestamp: 1,
           userId,
-          localEmbedding: vec(512),
+          localEmbedding: vec(DIM),
         });
       return [await mk(userA.subject), await mk(userB.subject)];
     });
     const asA = t.withIdentity(userA);
-    const r = await asA.action(api.search.searchCaptures, { query: "", vector: vec(512) });
-    expect(r.results.map((x) => x.id)).toEqual([mine]);
-    expect(r.results.map((x) => x.id)).not.toContain(theirs);
-    expect(Object.keys(r.results[0]!.sources)).toEqual(["image"]);
-    expect(r.results[0]!.score).toBeCloseTo(1, 3);
-    const textOnly = await asA.action(api.search.searchCaptures, { query: "", vector: vec(512), kinds: ["text"] });
-    expect(textOnly.results).toEqual([]);
+    const visual = await asA.action(api.search.searchCaptures, { query: "", vector: vec(DIM), kinds: ["viewport"] });
+    expect(visual.results.map((x) => x.id)).toEqual([mine]);
+    expect(visual.results.map((x) => x.id)).not.toContain(theirs);
+    expect(Object.keys(visual.results[0]!.sources)).toEqual(["image"]);
+    expect(visual.results[0]!.score).toBeCloseTo(1, 3);
+  });
+
+  test("score is a display match from the cosine bands, not the raw cosine", async () => {
+    const t = makeT();
+    const orthogonal = (i: number) => Array.from({ length: DIM }, (_, j) => (j === i ? 1 : 0));
+    await t.run(async (ctx) =>
+      ctx.db.insert("captures", {
+        kind: "viewport",
+        storageId: await ctx.storage.store(new Blob(["x"])),
+        width: 1,
+        height: 1,
+        url: "u",
+        timestamp: 1,
+        userId: userA.subject,
+        localEmbedding: orthogonal(0),
+      })
+    );
+    // cosine 0.125 sits mid-way through the image band [0.05, 0.2].
+    const q = orthogonal(0).map((x, j) => (j === 1 ? Math.sqrt(1 - 0.125 ** 2) : x * 0.125));
+    const r = await t
+      .withIdentity(userA)
+      .action(api.search.searchCaptures, { query: "", vector: q, kinds: ["viewport"] });
+    expect(r.results[0]!.sources.image!.score).toBeCloseTo(0.125, 3);
+    expect(r.results[0]!.score).toBeCloseTo(0.5, 2);
   });
 
   test("text vector hits come from the text index only", async () => {
@@ -426,15 +449,20 @@ describe("search.searchCaptures", () => {
           url: "u",
           timestamp: 1,
           userId,
-          textEmbedding: vec(512),
+          textEmbedding: vec(DIM),
         });
       return [await mk(userA.subject), await mk(userB.subject)];
     });
     const r = await t
       .withIdentity(userA)
-      .action(api.search.searchCaptures, { query: "", textVector: vec(512) });
+      .action(api.search.searchCaptures, { query: "", textVector: vec(DIM) });
     expect(r.results.map((x) => x.id)).toEqual([mine]);
     expect(r.results.map((x) => x.id)).not.toContain(theirs);
     expect(Object.keys(r.results[0]!.sources)).toEqual(["text"]);
+    // Without a textVector, the one query vector is used for the text index too.
+    const viaVector = await t
+      .withIdentity(userA)
+      .action(api.search.searchCaptures, { query: "", vector: vec(DIM), kinds: ["text"] });
+    expect(viaVector.results.map((x) => x.id)).toEqual([mine]);
   });
 });

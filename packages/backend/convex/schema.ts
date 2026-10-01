@@ -131,7 +131,7 @@ const commonCaptureFields = {
 
 /**
  * Text-space vector for text / link / code captures. Kept in its own field
- * (and index) because CLIP text->text cosines run far higher than
+ * (and index) because the model's text->text cosines run far higher than
  * text->image ones: in one index, text captures crowd out every image.
  */
 const textVectorField = { textEmbedding: v.optional(v.array(v.float64())) };

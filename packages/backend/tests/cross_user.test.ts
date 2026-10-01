@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { api } from "../convex/_generated/api";
-import { makeT, seedUser, userA, userB, vec, type T } from "./fixtures";
+import { makeT, seedUser, userA, userB, vec, DIM, type T } from "./fixtures";
 
 type Seed = Awaited<ReturnType<typeof seedUser>>;
 type Kind = "query" | "mutation" | "action";
@@ -39,7 +39,7 @@ const CASES: Case[] = [
   { name: "local_ai.applyAutoMetadata", kind: "mutation", fn: api.local_ai.applyAutoMetadata, args: (a) => ({ id: a.linkId, tags: ["pwned"], domain: "evil" }) },
   { name: "local_ai.listPendingCaptures", kind: "query", fn: api.local_ai.listPendingCaptures, args: () => ({ limit: 20 }) },
   { name: "local_ai.claimCapture", kind: "mutation", fn: api.local_ai.claimCapture, args: (a) => ({ id: a.linkId }) },
-  { name: "local_ai.completeProcessing", kind: "mutation", fn: api.local_ai.completeProcessing, args: (a) => ({ id: a.linkId, claim: "forged", textEmbedding: vec(512, 0.9), aiTags: ["pwned"] }) },
+  { name: "local_ai.completeProcessing", kind: "mutation", fn: api.local_ai.completeProcessing, args: (a) => ({ id: a.linkId, claim: "forged", textEmbedding: vec(DIM, 0.9), aiTags: ["pwned"] }) },
   { name: "local_ai.failProcessing", kind: "mutation", fn: api.local_ai.failProcessing, args: (a) => ({ id: a.linkId, claim: "forged", error: "pwned" }) },
   { name: "local_ai.retryProcessing", kind: "mutation", fn: api.local_ai.retryProcessing, args: (a) => ({ captureId: a.shotId }) },
   { name: "local_ai.recoverStaleProcessing", kind: "mutation", fn: api.local_ai.recoverStaleProcessing, args: () => ({}) },
