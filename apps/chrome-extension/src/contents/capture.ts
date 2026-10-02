@@ -42,7 +42,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   else hideIndicator()
 })
 
-let activeMode: "selection-basic" | "selection-category" | "screenshot" | null = null
+let activeMode:"selection-basic" | "selection-category" | "screenshot" | null = null
 
 document.addEventListener(
   "keydown",
@@ -163,8 +163,8 @@ document.addEventListener(
       }
     }
 
-    // Ctrl/Cmd + Shift + Y - Toggle the image picker (saves the original file)
-    if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "Y") {
+    // Ctrl/Cmd + Shift + F - Toggle the image picker (saves the original file)
+    if (hasCtrlOrMeta && e.shiftKey && !e.altKey && key === "F") {
       e.preventDefault()
       e.stopPropagation()
 
